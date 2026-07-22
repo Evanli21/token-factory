@@ -1,0 +1,40 @@
+{
+  "name": "token-factory",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "web",
+    "admin",
+    "gateway",
+    "worker",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n gateway,worker,web,admin -c blue,magenta,green,yellow \"npm run dev -w @token-factory/gateway\" \"npm run dev -w @token-factory/worker\" \"npm run dev -w @token-factory/web\" \"npm run dev -w @token-factory/admin\"",
+    "build": "npm run prisma:generate && npm run build -w @token-factory/database && npm run build -w @token-factory/gateway && npm run build -w @token-factory/worker && npm run build -w @token-factory/web && npm run build -w @token-factory/admin",
+    "typecheck": "npm run prisma:generate && npm run build -w @token-factory/database && npm run typecheck -w @token-factory/gateway && npm run typecheck -w @token-factory/worker && npm run typecheck -w @token-factory/web && npm run typecheck -w @token-factory/admin",
+    "test": "npm run test -w @token-factory/gateway",
+    "prisma:generate": "prisma generate --schema packages/database/prisma/schema.prisma",
+    "db:push": "prisma db push --schema packages/database/prisma/schema.prisma && npm run db:sql",
+    "db:migrate": "prisma migrate deploy --schema packages/database/prisma/schema.prisma",
+    "db:sql": "prisma db execute --schema packages/database/prisma/schema.prisma --file packages/database/prisma/document-chunks.sql",
+    "db:seed": "tsx packages/database/prisma/seed.ts",
+    "setup": "npm install && npm run prisma:generate && npm run db:push && npm run db:seed",
+    "pack": "bash scripts/package.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0",
+    "postcss": "8.5.22",
+    "prisma": "^6.12.0",
+    "sharp": "0.35.3",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "overrides": {
+    "postcss": "8.5.22",
+    "sharp": "0.35.3"
+  }
+}

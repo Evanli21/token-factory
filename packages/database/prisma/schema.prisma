@@ -1,0 +1,729 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                    String                 @id @default(cuid())
+  email                 String                 @unique
+  passwordHash          String
+  name                  String?
+  role                  String                 @default("USER")
+  status                String                 @default("ACTIVE")
+  monthlyQuota          Decimal?               @db.Decimal(18, 8)
+  emailVerifiedAt       DateTime?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  wallet                Wallet?
+  apiKeys               ApiKey[]
+  usageLogs             UsageLog[]
+  reservations          Reservation[]
+  orders                Order[]
+  redeemedCards         Card[]                 @relation("CardRedeemer")
+  agentProfile          AgentProfile?
+  commissions           Commission[]
+  withdrawals           Withdrawal[]
+  ownedOrganizations    Organization[]          @relation("OrganizationOwner")
+  organizationMembers   OrgMember[]
+  organizationUsage     OrganizationUsage[]
+  knowledgeBases        KnowledgeBase[]
+  agentTools            AgentTool[]
+  agentApps             AgentApp[]
+  agentWorkflows        AgentWorkflow[]
+  notifications         Notification[]
+  tickets               Ticket[]
+  ticketReplies         TicketReply[]
+  auditLogs             AuditLog[]
+  exportTasks           ExportTask[]
+  knowledgeEvalDatasets KnowledgeEvalDataset[]
+  agentEvalDatasets     AgentEvalDataset[]
+}
+
+model Wallet {
+  id           String        @id @default(cuid())
+  userId       String        @unique
+  balance      Decimal       @default(0) @db.Decimal(18, 8)
+  frozen       Decimal       @default(0) @db.Decimal(18, 8)
+  currency     String        @default("USD")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  walletId    String
+  type        String
+  amount      Decimal  @db.Decimal(18, 8)
+  balance     Decimal  @db.Decimal(18, 8)
+  referenceId String?
+  description String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt])
+  @@index([referenceId])
+}
+
+model ApiKey {
+  id             String        @id @default(cuid())
+  userId         String
+  organizationId String?
+  name           String
+  keyPrefix      String
+  keyHash        String        @unique
+  status         String        @default("ACTIVE")
+  lastUsedAt     DateTime?
+  expiresAt      DateTime?
+  rateLimit      Int?
+  createdAt      DateTime      @default(now())
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  usageLogs      UsageLog[]
+  reservations   Reservation[]
+
+  @@index([userId])
+  @@index([organizationId])
+}
+
+model Model {
+  id              String         @id @default(cuid())
+  slug            String         @unique
+  name            String
+  provider        String
+  description     String?
+  contextWindow   Int            @default(128000)
+  inputPrice      Decimal        @default(0) @db.Decimal(18, 8)
+  outputPrice     Decimal        @default(0) @db.Decimal(18, 8)
+  embeddingPrice  Decimal        @default(0) @db.Decimal(18, 8)
+  capabilities    Json?
+  enabled         Boolean        @default(true)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  channelModels   ChannelModel[]
+  usageLogs       UsageLog[]
+  reservations    Reservation[]
+}
+
+model Channel {
+  id              String         @id @default(cuid())
+  name            String
+  provider        String
+  baseUrl         String
+  apiKeyEncrypted String
+  priority        Int            @default(10)
+  weight          Int            @default(100)
+  status          String         @default("ACTIVE")
+  timeoutMs       Int            @default(120000)
+  metadata        Json?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  channelModels   ChannelModel[]
+  usageLogs       UsageLog[]
+}
+
+model ChannelModel {
+  id            String   @id @default(cuid())
+  channelId     String
+  modelId       String
+  upstreamModel String
+  enabled       Boolean  @default(true)
+  priority      Int      @default(10)
+  weight        Int      @default(100)
+  inputPrice    Decimal? @db.Decimal(18, 8)
+  outputPrice   Decimal? @db.Decimal(18, 8)
+  channel       Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  model         Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, modelId])
+  @@index([modelId, enabled])
+}
+
+model UsageLog {
+  id               String        @id @default(cuid())
+  userId           String
+  apiKeyId         String?
+  modelId          String?
+  channelId        String?
+  organizationId   String?
+  requestId        String        @unique
+  endpoint         String
+  status           String
+  promptTokens     Int           @default(0)
+  completionTokens Int           @default(0)
+  toolCalls        Int           @default(0)
+  cost             Decimal       @default(0) @db.Decimal(18, 8)
+  latencyMs        Int?
+  errorCode        String?
+  metadata         Json?
+  createdAt        DateTime      @default(now())
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKey           ApiKey?       @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  model            Model?        @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  channel          Channel?      @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  toolLogs         AgentToolLog[]
+
+  @@index([userId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model Reservation {
+  id             String        @id @default(cuid())
+  userId         String
+  apiKeyId       String?
+  modelId        String?
+  organizationId String?
+  requestId      String        @unique
+  amount         Decimal       @db.Decimal(18, 8)
+  status         String        @default("PENDING")
+  expiresAt      DateTime
+  settledAt      DateTime?
+  createdAt      DateTime      @default(now())
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKey         ApiKey?       @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  model          Model?        @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([status, expiresAt])
+}
+
+model Order {
+  id          String   @id @default(cuid())
+  userId      String
+  orderNo     String   @unique
+  amount      Decimal  @db.Decimal(18, 2)
+  paidAmount  Decimal? @db.Decimal(18, 2)
+  currency    String   @default("USD")
+  provider    String?
+  status      String   @default("PENDING")
+  paidAt      DateTime?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model Card {
+  id           String   @id @default(cuid())
+  codeHash     String   @unique
+  codePrefix   String
+  amount       Decimal  @db.Decimal(18, 2)
+  status       String   @default("ACTIVE")
+  redeemedById String?
+  redeemedAt   DateTime?
+  expiresAt    DateTime?
+  createdAt    DateTime @default(now())
+  redeemedBy   User?    @relation("CardRedeemer", fields: [redeemedById], references: [id], onDelete: SetNull)
+}
+
+model AgentProfile {
+  id              String       @id @default(cuid())
+  userId          String       @unique
+  referralCode    String       @unique
+  commissionRate  Decimal      @default(0.1) @db.Decimal(8, 6)
+  availableAmount Decimal      @default(0) @db.Decimal(18, 8)
+  frozenAmount    Decimal      @default(0) @db.Decimal(18, 8)
+  status          String       @default("ACTIVE")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Commission {
+  id          String   @id @default(cuid())
+  userId      String
+  sourceUserId String?
+  amount      Decimal  @db.Decimal(18, 8)
+  status      String   @default("PENDING")
+  referenceId String?
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model Withdrawal {
+  id        String   @id @default(cuid())
+  userId    String
+  amount    Decimal  @db.Decimal(18, 8)
+  method    String
+  account   Json
+  status    String   @default("PENDING")
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Organization {
+  id            String                    @id @default(cuid())
+  name          String
+  slug          String                    @unique
+  ownerId       String
+  status        String                    @default("ACTIVE")
+  monthlyQuota  Decimal?                  @db.Decimal(18, 8)
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  owner         User                      @relation("OrganizationOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  members       OrgMember[]
+  wallet        OrganizationWallet?
+  apiKeys       ApiKey[]
+  usageLogs     UsageLog[]
+  reservations  Reservation[]
+  transactions  OrganizationTransaction[]
+  usage         OrganizationUsage[]
+  invoices      MonthlyInvoice[]
+  knowledgeBases KnowledgeBase[]
+  agentApps     AgentApp[]
+  workflows     AgentWorkflow[]
+  webhooks      WebhookEndpoint[]
+}
+
+model OrgMember {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  role           String       @default("MEMBER")
+  status         String       @default("ACTIVE")
+  joinedAt       DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model OrganizationWallet {
+  id             String                    @id @default(cuid())
+  organizationId String                    @unique
+  balance        Decimal                   @default(0) @db.Decimal(18, 8)
+  frozen         Decimal                   @default(0) @db.Decimal(18, 8)
+  currency       String                    @default("USD")
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+  organization   Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transactions   OrganizationTransaction[]
+}
+
+model OrganizationTransaction {
+  id                   String             @id @default(cuid())
+  organizationId       String
+  organizationWalletId String
+  type                 String
+  amount               Decimal            @db.Decimal(18, 8)
+  balance              Decimal            @db.Decimal(18, 8)
+  referenceId          String?
+  description          String?
+  createdAt            DateTime           @default(now())
+  organization         Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  wallet               OrganizationWallet @relation(fields: [organizationWalletId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+model OrganizationUsage {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  month          DateTime
+  requestCount   Int          @default(0)
+  promptTokens   BigInt       @default(0)
+  outputTokens   BigInt       @default(0)
+  cost           Decimal      @default(0) @db.Decimal(18, 8)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId, month])
+  @@index([organizationId, month])
+}
+
+model MonthlyInvoice {
+  id             String       @id @default(cuid())
+  organizationId String
+  month          DateTime
+  amount         Decimal      @db.Decimal(18, 8)
+  status         String       @default("DRAFT")
+  pdfUrl         String?
+  lineItems      Json?
+  issuedAt       DateTime?
+  dueAt          DateTime?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, month])
+}
+
+model KnowledgeBase {
+  id             String        @id @default(cuid())
+  userId         String
+  organizationId String?
+  name           String
+  description    String?
+  embeddingModel String        @default("text-embedding-3-small")
+  chunkSize      Int           @default(800)
+  chunkOverlap   Int           @default(100)
+  status         String        @default("ACTIVE")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  documents      Document[]
+  evalDatasets   KnowledgeEvalDataset[]
+}
+
+model Document {
+  id              String        @id @default(cuid())
+  knowledgeBaseId String
+  name            String
+  mimeType        String
+  size            Int
+  storageKey      String
+  checksum        String?
+  status          String        @default("PENDING")
+  chunkCount      Int           @default(0)
+  errorMessage    String?
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+
+  @@index([knowledgeBaseId, createdAt])
+}
+
+model AgentTool {
+  id          String         @id @default(cuid())
+  userId      String?
+  name        String
+  slug        String         @unique
+  description String?
+  schema      Json
+  endpoint    String?
+  secret      String?
+  price       Decimal        @default(0) @db.Decimal(18, 8)
+  enabled     Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  user        User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  logs        AgentToolLog[]
+  apps        AgentApp[]      @relation("AgentAppTools")
+}
+
+model AgentToolLog {
+  id         String    @id @default(cuid())
+  toolId     String
+  usageLogId String?
+  input      Json?
+  output     Json?
+  status     String
+  cost       Decimal   @default(0) @db.Decimal(18, 8)
+  latencyMs  Int?
+  createdAt  DateTime  @default(now())
+  tool       AgentTool @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  usageLog   UsageLog? @relation(fields: [usageLogId], references: [id], onDelete: SetNull)
+
+  @@index([toolId, createdAt])
+}
+
+model AgentApp {
+  id             String          @id @default(cuid())
+  userId         String
+  organizationId String?
+  name           String
+  slug           String          @unique
+  description    String?
+  systemPrompt   String
+  modelSlug      String
+  avatarUrl      String?
+  pricePerRun    Decimal         @default(0) @db.Decimal(18, 8)
+  visibility     String          @default("PRIVATE")
+  status         String          @default("ACTIVE")
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization?   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tools          AgentTool[]      @relation("AgentAppTools")
+  evalDatasets   AgentEvalDataset[]
+}
+
+model AgentWorkflow {
+  id             String        @id @default(cuid())
+  userId         String
+  organizationId String?
+  name           String
+  slug           String        @unique
+  description    String?
+  definition     Json
+  version        Int           @default(1)
+  status         String        @default("DRAFT")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model WorkflowTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  category    String
+  definition  Json
+  featured    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String?
+  type      String
+  title     String
+  content   String
+  readAt    DateTime?
+  metadata  Json?
+  createdAt DateTime  @default(now())
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+model WebhookEndpoint {
+  id             String            @id @default(cuid())
+  organizationId String
+  url            String
+  secret         String
+  events         String[]
+  status         String            @default("ACTIVE")
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries     WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id         String          @id @default(cuid())
+  endpointId String
+  event      String
+  payload    Json
+  status     String          @default("PENDING")
+  attempts   Int             @default(0)
+  response   String?
+  nextRetryAt DateTime?
+  createdAt  DateTime        @default(now())
+  endpoint   WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextRetryAt])
+}
+
+model Ticket {
+  id        String        @id @default(cuid())
+  userId    String
+  subject   String
+  content   String
+  priority  String        @default("NORMAL")
+  status    String        @default("OPEN")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replies   TicketReply[]
+}
+
+model TicketReply {
+  id        String   @id @default(cuid())
+  ticketId  String
+  userId    String?
+  content   String
+  isStaff   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model ModerationRule {
+  id          String          @id @default(cuid())
+  name        String
+  type        String          @default("KEYWORD")
+  pattern     String
+  action      String          @default("BLOCK")
+  enabled     Boolean         @default(true)
+  priority    Int             @default(10)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  logs        ModerationLog[]
+}
+
+model ModerationLog {
+  id        String          @id @default(cuid())
+  ruleId    String?
+  userId    String?
+  requestId String?
+  content   String
+  action    String
+  metadata  Json?
+  createdAt DateTime        @default(now())
+  rule      ModerationRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+}
+
+model SystemAlert {
+  id           String   @id @default(cuid())
+  type         String
+  severity     String
+  title        String
+  message      String
+  source       String?
+  status       String   @default("OPEN")
+  acknowledgedAt DateTime?
+  resolvedAt   DateTime?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([status, severity, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  actorType String
+  action    String
+  resource  String
+  resourceId String?
+  ip        String?
+  userAgent String?
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([resource, resourceId])
+  @@index([createdAt])
+}
+
+model ExportTask {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String
+  format      String   @default("CSV")
+  filters     Json?
+  status      String   @default("PENDING")
+  progress    Int      @default(0)
+  fileUrl     String?
+  errorMessage String?
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+}
+
+model KnowledgeEvalDataset {
+  id              String              @id @default(cuid())
+  userId          String
+  knowledgeBaseId String
+  name            String
+  description     String?
+  createdAt       DateTime            @default(now())
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  knowledgeBase   KnowledgeBase       @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  cases           KnowledgeEvalCase[]
+  runs            KnowledgeEvalRun[]
+}
+
+model KnowledgeEvalCase {
+  id              String               @id @default(cuid())
+  datasetId       String
+  question        String
+  expectedAnswer  String?
+  expectedSources Json?
+  createdAt       DateTime             @default(now())
+  dataset         KnowledgeEvalDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  results         KnowledgeEvalResult[]
+}
+
+model KnowledgeEvalRun {
+  id          String               @id @default(cuid())
+  datasetId   String
+  status      String               @default("PENDING")
+  metrics     Json?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime             @default(now())
+  dataset     KnowledgeEvalDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  results     KnowledgeEvalResult[]
+}
+
+model KnowledgeEvalResult {
+  id         String            @id @default(cuid())
+  runId      String
+  caseId     String
+  answer     String?
+  sources    Json?
+  score      Decimal?          @db.Decimal(8, 6)
+  metrics    Json?
+  createdAt  DateTime          @default(now())
+  run        KnowledgeEvalRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  case       KnowledgeEvalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, caseId])
+}
+
+model AgentEvalDataset {
+  id          String          @id @default(cuid())
+  userId      String
+  agentAppId  String
+  name        String
+  description String?
+  createdAt   DateTime        @default(now())
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentApp    AgentApp        @relation(fields: [agentAppId], references: [id], onDelete: Cascade)
+  cases       AgentEvalCase[]
+  runs        AgentEvalRun[]
+}
+
+model AgentEvalCase {
+  id               String             @id @default(cuid())
+  datasetId        String
+  input            Json
+  expectedOutput   String?
+  expectedToolCalls Json?
+  createdAt        DateTime           @default(now())
+  dataset          AgentEvalDataset   @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  results          AgentEvalResult[]
+}
+
+model AgentEvalRun {
+  id          String            @id @default(cuid())
+  datasetId   String
+  status      String            @default("PENDING")
+  metrics     Json?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime          @default(now())
+  dataset     AgentEvalDataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  results     AgentEvalResult[]
+}
+
+model AgentEvalResult {
+  id        String        @id @default(cuid())
+  runId     String
+  caseId    String
+  output    String?
+  toolCalls Json?
+  score     Decimal?      @db.Decimal(8, 6)
+  metrics   Json?
+  createdAt DateTime      @default(now())
+  run       AgentEvalRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  case      AgentEvalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, caseId])
+}

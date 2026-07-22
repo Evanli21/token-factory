@@ -1,0 +1,26 @@
+{
+  "name": "@token-factory/worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@token-factory/database": "1.0.0",
+    "bullmq": "^5.56.3",
+    "dotenv": "^17.2.0",
+    "mammoth": "^1.9.1",
+    "pdf-parse": "^1.1.1",
+    "pdfkit": "^0.17.1",
+    "pino": "^9.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/pdfkit": "^0.17.3"
+  }
+}

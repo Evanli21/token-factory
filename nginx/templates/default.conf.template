@@ -1,0 +1,40 @@
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  '' close;
+}
+
+server {
+  listen 80;
+  server_name ${DOMAIN} admin.${DOMAIN} api.${DOMAIN};
+  location /.well-known/acme-challenge/ { root /var/www/certbot; }
+  location / { return 301 https://$host$request_uri; }
+}
+
+server {
+  listen 443 ssl http2;
+  server_name ${DOMAIN};
+  ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+  include /etc/nginx/snippets/tls.conf;
+  location / { proxy_pass http://web:3000; include /etc/nginx/snippets/proxy.conf; }
+}
+
+server {
+  listen 443 ssl http2;
+  server_name admin.${DOMAIN};
+  ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+  include /etc/nginx/snippets/tls.conf;
+  location / { proxy_pass http://admin:3001; include /etc/nginx/snippets/proxy.conf; }
+}
+
+server {
+  listen 443 ssl http2;
+  server_name api.${DOMAIN};
+  ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+  include /etc/nginx/snippets/tls.conf;
+  client_max_body_size 30m;
+  proxy_buffering off;
+  location / { proxy_pass http://gateway:8000; include /etc/nginx/snippets/proxy.conf; proxy_read_timeout 300s; }
+}
