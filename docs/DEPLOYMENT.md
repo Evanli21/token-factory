@@ -1,5 +1,32 @@
 # Production Deployment
 
+## Recommended hybrid deployment
+
+For a small production installation, deploy `web/` and `admin/` as separate
+Vercel projects and run only the stateful backend on the VPS:
+
+- `www.example.com`: Vercel project rooted at `web/`
+- `admin.example.com`: Vercel project rooted at `admin/`
+- `api.example.com`: VPS running Caddy, Gateway, Worker, PostgreSQL/pgvector and Redis
+
+Set both Vercel projects' `NEXT_PUBLIC_API_BASE_URL` to
+`https://api.example.com`. The web project also needs
+`NEXT_PUBLIC_BASE_URL=https://www.example.com`.
+
+On the VPS, create `.env.production` from `.env.example`, set strong unique
+secrets and use the backend-only Compose file:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.backend.yml config
+docker compose --env-file .env.production -f docker-compose.backend.yml up -d --build
+docker compose --env-file .env.production -f docker-compose.backend.yml ps
+```
+
+Caddy obtains and renews TLS automatically. Only ports 22, 80 and 443 should
+be open on the host. PostgreSQL, Redis and Gateway remain on the private Docker
+network. On a 4 GB VPS, keep `WORKER_CONCURRENCY=1` and configure at least 2 GB
+of swap.
+
 ## Server baseline
 
 - Ubuntu 24.04 LTS or equivalent, 4 vCPU / 8 GB RAM minimum

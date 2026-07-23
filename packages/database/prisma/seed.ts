@@ -4,18 +4,6 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const passwordHash = await bcrypt.hash('demo123456', 12);
-  const user = await prisma.user.upsert({
-    where: { email: 'demo@token-factory.local' },
-    update: {},
-    create: {
-      email: 'demo@token-factory.local',
-      name: 'Demo User',
-      passwordHash,
-      wallet: { create: { balance: 10 } },
-    },
-  });
-
   const models = [
     {
       slug: 'gpt-4o-mini',
@@ -72,19 +60,35 @@ async function main() {
     });
   }
 
-  await prisma.agentApp.upsert({
-    where: { slug: 'research-assistant' },
-    update: {},
-    create: {
-      userId: user.id,
-      name: 'Research Assistant',
-      slug: 'research-assistant',
-      description: 'Answers questions with a concise research plan.',
-      systemPrompt: 'You are a careful research assistant. Explain assumptions and cite available sources.',
-      modelSlug: 'gpt-4o-mini',
-      visibility: 'PUBLIC',
-    },
-  });
+  const seedDemoUser = process.env.SEED_DEMO_USER === 'true' || process.env.NODE_ENV !== 'production';
+  if (seedDemoUser) {
+    const demoPassword = process.env.DEMO_USER_PASSWORD || 'demo123456';
+    const passwordHash = await bcrypt.hash(demoPassword, 12);
+    const user = await prisma.user.upsert({
+      where: { email: 'demo@token-factory.local' },
+      update: {},
+      create: {
+        email: 'demo@token-factory.local',
+        name: 'Demo User',
+        passwordHash,
+        wallet: { create: { balance: 10 } },
+      },
+    });
+
+    await prisma.agentApp.upsert({
+      where: { slug: 'research-assistant' },
+      update: {},
+      create: {
+        userId: user.id,
+        name: 'Research Assistant',
+        slug: 'research-assistant',
+        description: 'Answers questions with a concise research plan.',
+        systemPrompt: 'You are a careful research assistant. Explain assumptions and cite available sources.',
+        modelSlug: 'gpt-4o-mini',
+        visibility: 'PUBLIC',
+      },
+    });
+  }
 
   await prisma.workflowTemplate.upsert({
     where: { slug: 'summarize-and-translate' },
@@ -104,7 +108,7 @@ async function main() {
     },
   });
 
-  console.log('Seed complete. Demo login: demo@token-factory.local / demo123456');
+  console.log(`Seed complete. Demo user: ${seedDemoUser ? 'enabled' : 'disabled'}`);
 }
 
 main().finally(() => prisma.$disconnect());

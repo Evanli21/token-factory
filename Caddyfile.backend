@@ -1,0 +1,27 @@
+{
+  email {$LETSENCRYPT_EMAIL}
+  admin off
+}
+
+{$API_DOMAIN} {
+  encode zstd gzip
+
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    -Server
+  }
+
+  reverse_proxy gateway:8000 {
+    transport http {
+      read_timeout 300s
+      write_timeout 300s
+    }
+  }
+
+  log {
+    output stdout
+    format console
+  }
+}

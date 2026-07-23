@@ -219,7 +219,7 @@ const worker = new Worker('token-factory', async (job) => {
     case 'agent-eval': return evaluateAgent(String(job.data.runId));
     default: throw new Error(`Unknown job: ${job.name}`);
   }
-}, { connection: { url: redisUrl }, concurrency: 4 });
+}, { connection: { url: redisUrl }, concurrency: Math.max(1, Number(process.env.WORKER_CONCURRENCY || 1)) });
 
 worker.on('completed', (job) => logger.info({ jobId: job.id, name: job.name }, 'job completed'));
 worker.on('failed', (job, error) => logger.error({ jobId: job?.id, name: job?.name, error: error.message }, 'job failed'));
