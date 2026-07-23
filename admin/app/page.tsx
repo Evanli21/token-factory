@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
@@ -8,7 +9,8 @@ type Item = Record<string, unknown>;
 type Overview = { metrics: Record<string, string | number>; recent: Item[] };
 
 const nav = [
-  ["overview", "平台总览", "⌂", "OPERATIONS"],
+  ["overview", "仪表盘", "⌂", "OPERATIONS"],
+  ["platform", "平台总览", "◫", "OPERATIONS"],
   ["users", "用户管理", "♙", "OPERATIONS"],
   ["models", "模型管理", "◇", "AI ROUTING"],
   ["channels", "渠道管理", "⇄", "AI ROUTING"],
@@ -19,13 +21,15 @@ const nav = [
   ["agents", "代理管理", "♧", "PARTNERS"],
   ["withdrawals", "提现管理", "⇩", "PARTNERS"],
   ["finance", "组织财务 / 月结", "＄", "FINANCE"],
+  ["invoices", "月结账单 / PDF", "▤", "FINANCE"],
   ["alerts", "系统告警", "△", "SYSTEM"],
   ["tasks", "后台任务", "◌", "SYSTEM"],
   ["audit-logs", "审计日志", "⌕", "SYSTEM"],
 ] as const;
 
 const titles: Record<string, [string, string]> = {
-  overview: ["Command Center", "平台运行总览"],
+  overview: ["Command Center", "仪表盘"],
+  platform: ["Platform Overview", "平台运行总览"],
   users: ["Identity", "用户管理"],
   models: ["Catalog", "模型管理"],
   channels: ["Routing", "渠道管理"],
@@ -36,10 +40,49 @@ const titles: Record<string, [string, string]> = {
   agents: ["Partners", "代理管理"],
   withdrawals: ["Settlement", "提现管理"],
   finance: ["Enterprise Billing", "组织财务与月结账单"],
+  invoices: ["Invoice Center", "月结账单与 PDF"],
   alerts: ["Incident Center", "系统告警"],
   tasks: ["Async Runtime", "后台任务"],
   "audit-logs": ["Compliance", "审计日志"],
 };
+
+const adminRoutes: Record<string, string> = {
+  overview: "/dashboard",
+  platform: "/platform",
+  users: "/users",
+  models: "/models",
+  channels: "/channels",
+  orders: "/orders",
+  cards: "/cards",
+  "usage-logs": "/logs",
+  moderation: "/moderation",
+  agents: "/agents",
+  withdrawals: "/withdrawals",
+  finance: "/finance",
+  invoices: "/invoices",
+  alerts: "/system/alerts",
+  tasks: "/system/jobs",
+  "audit-logs": "/audit",
+};
+
+function adminSection(pathname: string) {
+  if (pathname === "/platform") return "platform";
+  if (pathname === "/users") return "users";
+  if (pathname === "/models") return "models";
+  if (pathname === "/channels") return "channels";
+  if (pathname === "/orders") return "orders";
+  if (pathname === "/cards") return "cards";
+  if (pathname === "/logs") return "usage-logs";
+  if (pathname === "/moderation") return "moderation";
+  if (pathname === "/agents") return "agents";
+  if (pathname === "/withdrawals") return "withdrawals";
+  if (pathname === "/finance") return "finance";
+  if (pathname === "/invoices") return "invoices";
+  if (pathname === "/system/alerts") return "alerts";
+  if (pathname === "/system/jobs") return "tasks";
+  if (pathname === "/audit") return "audit-logs";
+  return "overview";
+}
 
 async function api<T>(
   path: string,
@@ -48,6 +91,7 @@ async function api<T>(
 ): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
@@ -105,9 +149,11 @@ function flatten(item: Item) {
 }
 
 export default function Admin() {
+  const pathname = usePathname();
+  const router = useRouter();
   const [token, setToken] = useState("");
   const [ready, setReady] = useState(false);
-  const [active, setActive] = useState("overview");
+  const [active, setActive] = useState(() => adminSection(pathname));
   const [overview, setOverview] = useState<Overview | null>(null);
   const [data, setData] = useState<Item[]>([]);
   const [extra, setExtra] = useState<Record<string, Item[]>>({});
@@ -121,10 +167,11 @@ export default function Admin() {
       setBusy(true);
       setError("");
       try {
+        const endpoint = section === "platform" ? "overview" : section === "invoices" ? "finance" : section;
         const result = await api<
           Overview | { data?: Item[]; [key: string]: unknown }
-        >(`/api/admin/${section}`, session);
-        if (section === "overview") {
+        >(`/api/admin/${endpoint}`, session);
+        if (endpoint === "overview") {
           setOverview(result as Overview);
           setData([]);
         } else {
@@ -139,11 +186,12 @@ export default function Admin() {
               ),
             ) as Record<string, Item[]>;
             setExtra(collections);
-            setData(Object.values(collections)[0] || []);
+            setData(section === "invoices" ? collections.invoices || [] : Object.values(collections)[0] || []);
           }
         }
       } catch (err) {
         if (err instanceof Error && /authentication/i.test(err.message)) {
+          localStorage.removeItem("szrouter_admin");
           localStorage.removeItem("tf_admin");
           setToken("");
         }
@@ -157,7 +205,7 @@ export default function Admin() {
   );
 
   useEffect(() => {
-    const saved = localStorage.getItem("tf_admin") || "";
+    const saved = localStorage.getItem("szrouter_admin") || localStorage.getItem("tf_admin") || "";
     setToken(saved);
     if (saved) void load("overview", saved);
     else setReady(true);
@@ -165,6 +213,9 @@ export default function Admin() {
   useEffect(() => {
     if (token && ready) void load(active);
   }, [active]);
+  useEffect(() => {
+    setActive(adminSection(pathname));
+  }, [pathname]);
 
   async function mutate(path: string, init: RequestInit) {
     setBusy(true);
@@ -178,8 +229,11 @@ export default function Admin() {
     }
   }
   function logout() {
+    void fetch(`${API}/api/auth/logout`, { method: "POST", credentials: "include" });
+    localStorage.removeItem("szrouter_admin");
     localStorage.removeItem("tf_admin");
     setToken("");
+    router.push("/login");
   }
 
   if (!ready)
@@ -192,9 +246,10 @@ export default function Admin() {
     return (
       <Login
         onToken={(session) => {
-          localStorage.setItem("tf_admin", session);
+          localStorage.setItem("szrouter_admin", session);
           setToken(session);
           setReady(false);
+          router.push("/dashboard");
           void load("overview", session);
         }}
       />
@@ -224,6 +279,7 @@ export default function Admin() {
                     onClick={() => {
                       setActive(id);
                       setNavOpen(false);
+                      router.push(adminRoutes[id] || "/dashboard");
                     }}
                   >
                     <span>{icon}</span>
@@ -264,14 +320,14 @@ export default function Admin() {
             </div>
             <div className="page-actions">
               <button onClick={() => void load(active)}>↻ 刷新</button>
-              {active !== "overview" && (
+              {["models", "channels", "cards", "moderation"].includes(active) && (
                 <CreateAction active={active} busy={busy} onMutate={mutate} />
               )}
             </div>
           </div>
           {error && <div className="error">{error}</div>}
           {busy && <div className="thin-loader" />}
-          {active === "overview" ? (
+          {active === "overview" || active === "platform" ? (
             <OverviewView value={overview} />
           ) : (
             <SectionView
@@ -463,8 +519,10 @@ function SectionView({
 }) {
   const sections = Object.keys(extra);
   const [tab, setTab] = useState("");
+  const [query, setQuery] = useState("");
   useEffect(() => setTab(sections[0] || ""), [active, sections.join(",")]);
-  const rows = sections.length ? extra[tab] || [] : data;
+  const sourceRows = sections.length ? extra[tab] || [] : data;
+  const rows = query ? sourceRows.filter((row) => JSON.stringify(row).toLocaleLowerCase().includes(query.toLocaleLowerCase())) : sourceRows;
   return (
     <article className="panel table-panel">
       <div className="panel-head">
@@ -485,6 +543,7 @@ function SectionView({
             ))}
           </div>
         )}
+        <input className="table-filter" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="筛选当前列表" aria-label="筛选当前列表" />
       </div>
       <DataTable
         rows={rows.map(flatten)}
@@ -569,7 +628,17 @@ function SectionView({
                 解决
               </button>
             );
-          return null;
+          if (active === "invoices" && row.pdfUrl)
+            return (
+              <a className="row-action" href={`${API}/api/admin/invoices/${id}/pdf`} target="_blank" rel="noreferrer">
+                下载 PDF
+              </a>
+            );
+          return (
+            <button className="row-action" onClick={() => void navigator.clipboard.writeText(id)}>
+              复制 ID
+            </button>
+          );
         }}
       />
     </article>

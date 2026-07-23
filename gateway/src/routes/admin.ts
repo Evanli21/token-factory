@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Router } from 'express';
-import { prisma } from '@token-factory/database';
+import { Prisma, prisma } from '@szrouter/database';
 import { z } from 'zod';
 import { adminAuth } from '../middleware/auth.js';
 import { maskSecret } from '../lib/security.js';
@@ -81,7 +81,7 @@ adminRouter.get('/cards', async (_req, res) => res.json({ data: await prisma.car
 adminRouter.post('/cards', async (req, res, next) => {
   try {
     const { amount, count, expiresAt } = z.object({ amount: z.number().positive(), count: z.number().int().min(1).max(100), expiresAt: z.string().datetime().optional() }).parse(req.body);
-    const codes = Array.from({ length: count }, () => `TF-${randomBytes(10).toString('hex').toUpperCase()}`);
+    const codes = Array.from({ length: count }, () => `SZ-${randomBytes(10).toString('hex').toUpperCase()}`);
     await prisma.card.createMany({ data: codes.map((code) => ({ codeHash: createHash('sha256').update(code).digest('hex'), codePrefix: code.slice(0, 9), amount, expiresAt: expiresAt ? new Date(expiresAt) : undefined })) });
     res.status(201).json({ codes, warning: 'Card codes are only returned once.' });
   } catch (error) { next(error); }
@@ -107,6 +107,12 @@ adminRouter.get('/finance', async (_req, res) => {
   res.json({ wallets, transactions, invoices });
 });
 
+adminRouter.get('/invoices/:id/pdf', async (req, res) => {
+  const invoice = await prisma.monthlyInvoice.findUnique({ where: { id: req.params.id } });
+  if (!invoice?.pdfUrl) return res.status(404).json({ error: { message: 'Invoice PDF is not ready' } });
+  res.download(invoice.pdfUrl, `szrouter-invoice-${invoice.id}.pdf`);
+});
+
 adminRouter.get('/alerts', async (_req, res) => res.json({ data: await prisma.systemAlert.findMany({ orderBy: [{ status: 'asc' }, { createdAt: 'desc' }], take: 100 }) }));
 adminRouter.patch('/alerts/:id', async (req, res) => {
   const status = req.body?.status === 'RESOLVED' ? 'RESOLVED' : 'ACKNOWLEDGED';
@@ -114,8 +120,21 @@ adminRouter.patch('/alerts/:id', async (req, res) => {
 });
 
 adminRouter.get('/tasks', async (_req, res) => {
-  const [exports, documents, deliveries, evalRuns] = await Promise.all([prisma.exportTask.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }), prisma.document.findMany({ where: { status: { in: ['PENDING', 'PROCESSING', 'FAILED'] } }, orderBy: { updatedAt: 'desc' }, take: 50 }), prisma.webhookDelivery.findMany({ where: { status: { not: 'DELIVERED' } }, orderBy: { createdAt: 'desc' }, take: 50 }), prisma.knowledgeEvalRun.findMany({ where: { status: { not: 'COMPLETED' } }, take: 50 })]);
-  res.json({ exports, documents, deliveries, evalRuns });
+  const [backgroundJobs, exports, documents, deliveries, evalRuns] = await Promise.all([prisma.backgroundJob.findMany({ orderBy: { createdAt: 'desc' }, take: 100 }), prisma.exportTask.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }), prisma.document.findMany({ where: { status: { in: ['PENDING', 'PROCESSING', 'FAILED'] } }, orderBy: { updatedAt: 'desc' }, take: 50 }), prisma.webhookDelivery.findMany({ where: { status: { not: 'DELIVERED' } }, orderBy: { createdAt: 'desc' }, take: 50 }), prisma.knowledgeEvalRun.findMany({ where: { status: { not: 'COMPLETED' } }, take: 50 })]);
+  res.json({ backgroundJobs, exports, documents, deliveries, evalRuns });
+});
+
+adminRouter.post('/tasks', async (req, res, next) => {
+  try {
+    const input = z.object({
+      type: z.enum(['send_email', 'webhook_retry', 'export_task', 'knowledge_parse', 'knowledge_eval', 'agent_eval', 'monthly_billing', 'reconciliation', 'alert_checks', 'log_cleanup']),
+      payload: z.record(z.unknown()).default({}),
+      scheduledAt: z.string().datetime().optional(),
+    }).parse(req.body);
+    const task = await prisma.backgroundJob.create({ data: { type: input.type, payload: input.payload as Prisma.InputJsonValue, scheduledAt: input.scheduledAt ? new Date(input.scheduledAt) : undefined } });
+    await prisma.auditLog.create({ data: { actorType: 'ADMIN', action: 'CREATE', resource: 'BackgroundJob', resourceId: task.id, after: { type: task.type } } });
+    res.status(202).json(task);
+  } catch (error) { next(error); }
 });
 
 adminRouter.get('/audit-logs', async (_req, res) => res.json({ data: await prisma.auditLog.findMany({ include: { user: { select: { email: true } } }, orderBy: { createdAt: 'desc' }, take: 200 }) }));

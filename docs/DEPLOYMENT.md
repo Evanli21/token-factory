@@ -75,7 +75,7 @@ For schema changes requiring data migration, create reviewed Prisma migrations i
 
 ```bash
 docker compose --env-file .env.production -f docker-compose.prod.yml exec -T postgres \
-  pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > "token-factory-$(date +%F).dump"
+  pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > "szrouter-$(date +%F).dump"
 ```
 
 Back up the `uploads` and `exports` volumes or use versioned S3 storage. Test database and file restoration regularly.

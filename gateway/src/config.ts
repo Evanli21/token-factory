@@ -10,6 +10,7 @@ const schema = z.object({
   API_KEY_PEPPER: z.string().default('local-api-key-pepper'),
   ADMIN_PASSWORD: z.string().min(8).default('change-this-admin-password'),
   INTERNAL_API_TOKEN: z.string().default('local-internal-token'),
+  NEXT_PUBLIC_BASE_URL: z.string().default('http://localhost:3000'),
   CORS_ORIGINS: z.string().default('http://localhost:3000,http://localhost:3001'),
   DEFAULT_USER_CREDIT: z.coerce.number().nonnegative().default(5),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(60),

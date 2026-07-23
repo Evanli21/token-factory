@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Router, type Request } from 'express';
-import { prisma, type AgentTool, type Model } from '@token-factory/database';
+import { prisma, type AgentTool, type Model } from '@szrouter/database';
 import { z } from 'zod';
 import { apiKeyAuth } from '../middleware/auth.js';
 import { calculateCost, estimateReservation, estimateTokens, messageTokens } from '../lib/billing.js';
@@ -37,6 +37,7 @@ function parseUsage(data: Record<string, unknown>, body: ChatRequest) {
     promptTokens: Number(usage.prompt_tokens || messageTokens(body.messages)),
     completionTokens: Number(usage.completion_tokens || estimateTokens(content)),
     toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls as Array<Record<string, unknown>> : [],
+    outputText: content,
   };
 }
 
@@ -64,6 +65,8 @@ async function executeBilledChat(
   try {
     const result = await completeChat(body, candidates);
     const usage = parseUsage(result.data, body);
+    const outputModeration = await moderate(usage.outputText, req.auth!.user.id, requestId);
+    if (!outputModeration.allowed) throw new Error(`Output blocked by moderation rule: ${outputModeration.rule}`);
     const toolByName = new Map((options.tools || []).map((tool) => [tool.slug, tool]));
     let toolCost = 0;
     const calledTools: AgentTool[] = [];
@@ -125,6 +128,8 @@ v1Router.post('/chat/completions', async (req, res, next) => {
       });
       const completionTokens = Number(upstreamUsage?.completion_tokens || estimateTokens(completion));
       const actualPrompt = Number(upstreamUsage?.prompt_tokens || promptTokens);
+      const outputModeration = await moderate(completion, req.auth!.user.id, requestId);
+      if (!outputModeration.allowed) throw new Error(`Output blocked by moderation rule: ${outputModeration.rule}`);
       const cost = calculateCost(actualPrompt, completionTokens, Number(model.inputPrice), Number(model.outputPrice));
       await settleBalance(requestId, cost, true);
       await prisma.usageLog.create({ data: { userId: req.auth!.user.id, apiKeyId: req.auth!.apiKey?.id, organizationId: req.auth!.organizationId, modelId: model.id, channelId: candidates[0]!.channelId, requestId, endpoint: '/v1/chat/completions', status: 'SUCCESS', promptTokens: actualPrompt, completionTokens, cost, latencyMs: Date.now() - started } });
@@ -181,6 +186,31 @@ v1Router.post('/agent/chat', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+v1Router.post('/agent/apps/:id/chat', async (req, res, next) => {
+  try {
+    const input = z.object({ messages: z.array(messageSchema).min(1), stream: z.boolean().default(false) }).parse(req.body);
+    const agent = await prisma.agentApp.findFirst({
+      where: {
+        status: 'ACTIVE',
+        AND: [
+          { OR: [{ id: req.params.id }, { slug: req.params.id }] },
+          { OR: [
+            { visibility: 'PUBLIC' },
+            { userId: req.auth!.user.id },
+            ...(req.auth!.organizationId ? [{ organizationId: req.auth!.organizationId }] : []),
+          ] },
+        ],
+      },
+      include: { tools: true },
+    });
+    if (!agent) return res.status(404).json({ error: { message: 'Agent app not found' } });
+    const tools = agent.tools.map((tool) => ({ type: 'function', function: { name: tool.slug, description: tool.description, parameters: tool.schema } }));
+    const messages = input.messages.map((message) => ({ role: message.role, content: message.content ?? '', name: message.name, tool_call_id: message.tool_call_id }));
+    const result = await executeBilledChat(req, { model: agent.modelSlug, messages: [{ role: 'system', content: agent.systemPrompt }, ...messages], stream: false, tools }, '/v1/agent/apps/:id/chat', { baseCost: Number(agent.pricePerRun), tools: agent.tools });
+    res.json({ ...result.data, agent: { id: agent.id, slug: agent.slug, name: agent.name }, billing: { cost: result.cost } });
+  } catch (error) { next(error); }
+});
+
 v1Router.post('/knowledge/:id/ask', async (req, res, next) => {
   try {
     const input = z.object({ question: z.string().min(1).max(20_000), top_k: z.number().int().min(1).max(20).default(6), model: z.string().default(process.env.RAG_CHAT_MODEL || 'gpt-4o-mini') }).parse(req.body);
@@ -196,20 +226,45 @@ v1Router.post('/knowledge/:id/ask', async (req, res, next) => {
 v1Router.post('/workflows/:id/run', async (req, res, next) => {
   try {
     const input = z.object({ input: z.unknown(), model: z.string().default('gpt-4o-mini') }).parse(req.body);
-    const workflow = await prisma.agentWorkflow.findFirst({ where: { OR: [{ id: req.params.id }, { slug: req.params.id }], userId: req.auth!.user.id } });
+    const workflow = await prisma.agentWorkflow.findFirst({ where: { AND: [{ OR: [{ id: req.params.id }, { slug: req.params.id }] }, { OR: [{ userId: req.auth!.user.id }, { status: 'ACTIVE' }] }] } });
     if (!workflow) return res.status(404).json({ error: { message: 'Workflow not found' } });
-    const definition = workflow.definition as { nodes?: Array<{ id?: string; type?: string; prompt?: string }> };
+    const definition = workflow.definition as { nodes?: Array<{ id?: string; type?: string; prompt?: string; condition?: string; onTrue?: string; onFalse?: string }> };
     const nodes = definition.nodes || [];
     let previous = typeof input.input === 'string' ? input.input : JSON.stringify(input.input);
     const trace = [];
-    for (const node of nodes) {
-      if (node.type !== 'llm') { trace.push({ node: node.id, status: 'skipped', output: previous }); continue; }
+    const nodeIndexes = new Map(nodes.map((node, index) => [node.id, index]));
+    let index = 0;
+    let steps = 0;
+    while (index < nodes.length && steps < Math.max(10, nodes.length * 3)) {
+      const node = nodes[index]!;
+      steps += 1;
+      if (node.type === 'condition') {
+        const expression = node.condition || '';
+        const lengthRule = expression.match(/(?:previous|input)\.length\s*(>=|<=|>|<|==)\s*(\d+)/i);
+        const includesRule = expression.match(/(?:previous|input)\.includes\(['"](.+?)['"]\)/i);
+        let passed = false;
+        if (lengthRule) {
+          const target = Number(lengthRule[2]);
+          passed = lengthRule[1] === '>' ? previous.length > target : lengthRule[1] === '<' ? previous.length < target : lengthRule[1] === '>=' ? previous.length >= target : lengthRule[1] === '<=' ? previous.length <= target : previous.length === target;
+        } else if (includesRule) passed = previous.includes(includesRule[1]!);
+        else passed = Boolean(previous.trim());
+        const nextId = passed ? node.onTrue : node.onFalse;
+        trace.push({ node: node.id, type: 'condition', status: 'completed', passed, next: nextId || null });
+        index = nextId ? (nodeIndexes.get(nextId) ?? nodes.length) : index + 1;
+        continue;
+      }
+      if (node.type !== 'llm') {
+        trace.push({ node: node.id, type: node.type, status: 'completed', output: previous });
+        index += 1;
+        continue;
+      }
       const prompt = (node.prompt || '{{input}}').replaceAll('{{input}}', typeof input.input === 'string' ? input.input : JSON.stringify(input.input)).replaceAll('{{previous}}', previous);
       const result = await executeBilledChat(req, { model: input.model, messages: [{ role: 'user', content: prompt }], stream: false }, '/v1/workflows/:id/run');
       const choices = result.data.choices as Array<{ message?: { content?: string } }> | undefined;
       previous = choices?.[0]?.message?.content || '';
       trace.push({ node: node.id, status: 'completed', output: previous, cost: result.cost });
+      index += 1;
     }
-    res.json({ workflow_id: workflow.id, output: previous, trace });
+    res.json({ workflow_id: workflow.id, version: workflow.version, output: previous, trace, steps });
   } catch (error) { next(error); }
 });

@@ -8,5 +8,8 @@ cd "$PARENT"
 zip -rq "$ARCHIVE" token-factory \
   -x "*/node_modules/*" "*/.next/*" "*/dist/*" "*/coverage/*" "*.tsbuildinfo" "*/.DS_Store" \
   -x "*/.git/*" "*/.env" "*/.env.local" "*/.env.production" \
-  -x "*/logs/*" "*/uploads/*" "*/exports/*" "*/token-factory.zip"
+  -x "token-factory/logs/*" "token-factory/uploads/*" "token-factory/exports/*" \
+  -x "token-factory/gateway/logs/*" "token-factory/gateway/uploads/*" "token-factory/gateway/exports/*" \
+  -x "token-factory/worker/logs/*" "token-factory/worker/uploads/*" "token-factory/worker/exports/*" \
+  -x "*/token-factory.zip"
 echo "$ARCHIVE"

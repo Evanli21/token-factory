@@ -65,10 +65,10 @@ async function main() {
     const demoPassword = process.env.DEMO_USER_PASSWORD || 'demo123456';
     const passwordHash = await bcrypt.hash(demoPassword, 12);
     const user = await prisma.user.upsert({
-      where: { email: 'demo@token-factory.local' },
+      where: { email: 'demo@szrouter.local' },
       update: {},
       create: {
-        email: 'demo@token-factory.local',
+        email: 'demo@szrouter.local',
         name: 'Demo User',
         passwordHash,
         wallet: { create: { balance: 10 } },

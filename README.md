@@ -42,7 +42,7 @@ docker compose up -d --build
 - Gateway：[http://localhost:8000](http://localhost:8000)
 - Health：[http://localhost:8000/health](http://localhost:8000/health)
 
-首次启动会自动创建数据库表、pgvector 索引与演示数据。演示用户为 `demo@token-factory.local` / `demo123456`。未配置 `OPENAI_API_KEY` 时使用内置 Mock 渠道，便于完整验证登录、API Key、余额计费和 SSE；配置真实 Key 后执行 `docker compose restart gateway worker` 并重新运行 `docker compose exec gateway npm run db:seed`。
+首次启动会自动创建数据库表、pgvector 索引与演示数据。演示用户为 `demo@szrouter.local` / `demo123456`。未配置 `OPENAI_API_KEY` 时使用内置 Mock 渠道，便于完整验证登录、API Key、余额计费和 SSE；配置真实 Key 后执行 `docker compose restart gateway worker` 并重新运行 `docker compose exec gateway npm run db:seed`。
 
 查看状态与日志：
 
@@ -86,7 +86,7 @@ npm run build
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
-  -H "Authorization: Bearer tf_your_key" \
+  -H "Authorization: Bearer sz_your_key" \
   -H "Content-Type: application/json" \
   -d '{
     "model":"gpt-4o-mini",
@@ -104,7 +104,7 @@ curl http://localhost:8000/v1/chat/completions \
 - `POST /v1/knowledge/:id/ask`
 - `POST /v1/workflows/:id/run`
 
-请求鉴权支持 `Authorization: Bearer tf_...` 或 `X-API-Key`。更多示例见 [docs/API.md](docs/API.md)。
+请求鉴权支持 `Authorization: Bearer sz_...` 或 `X-API-Key`；历史 `tf_...` Key 仍可继续使用。更多示例见 [docs/API.md](docs/API.md)。
 
 ## 生产部署与域名
 
@@ -161,6 +161,45 @@ npm run pack
 ```
 
 压缩包会生成在项目上一级目录：`token-factory.zip`。脚本排除 `.git`、`node_modules`、`.next`、`dist`、`.env*`（保留 `.env.example`）、日志、上传和导出目录。
+
+## 管理员登录
+
+Admin 没有写死的用户名。打开 `http://localhost:3001/login`，输入 `.env` 中配置的 `ADMIN_PASSWORD`。生产环境建议再使用 Cloudflare Access、VPN 或企业 SSO 保护 Admin 域名。
+
+## 上传到 GitHub
+
+第一次上传：
+
+```bash
+git init
+git add .
+git commit -m "complete SZRouter platform"
+git branch -M main
+git remote add origin https://github.com/Evanli21/token-factory.git
+git push -u origin main
+```
+
+后续更新：
+
+```bash
+git add .
+git commit -m "update SZRouter"
+git push origin main
+```
+
+`.gitignore` 已排除 `.env`、`.env.production`、`node_modules`、`.next`、`dist`、日志、上传和导出文件。提交前仍应执行 `git status`，确认没有密钥。
+
+## 常见问题
+
+- 页面 404：拉取最新代码并重新构建；Web 与 Admin 清单中的 URL 现在都有真实 App Router 页面。
+- 前端显示网络错误：确认 `NEXT_PUBLIC_API_BASE_URL` 是浏览器可以访问的 Gateway 地址，修改后必须重新构建 Next.js。
+- Gateway 无法启动：先运行 `docker compose ps`，确认 PostgreSQL 和 Redis 健康；再看 `docker compose logs gateway`。
+- 文档一直 PENDING：检查 Worker 日志、Redis 连接、上传卷以及 Embedding 上游配置。
+- 向量表不存在：运行 `npm run db:sql`；全新数据库也可运行 `npm run db:migrate`。
+- 真实模型不可调用：在 `.env` 中设置上游 API Key，或在 Admin 的渠道管理中增加 OpenAI-compatible 渠道和模型映射。
+- 端口被占用：关闭占用 3000、3001、8000、5432 或 6379 的本地程序，或修改 Compose 端口映射。
+
+完整生产部署、备份和回滚步骤见 [DEPLOY.md](DEPLOY.md)。完整修复审计见 [docs/AUDIT.md](docs/AUDIT.md)。
 
 ## 上线前安全清单
 

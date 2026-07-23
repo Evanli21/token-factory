@@ -1,5 +1,5 @@
 {
-  "name": "@token-factory/worker",
+  "name": "@szrouter/worker",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@token-factory/database": "1.0.0",
+    "@szrouter/database": "1.0.0",
     "bullmq": "^5.56.3",
     "dotenv": "^17.2.0",
     "mammoth": "^1.9.1",

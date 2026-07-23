@@ -1,4 +1,5 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap");
+@tailwind utilities;
 :root {
   --nav: #12131a;
   --acid: #d9ff56;
@@ -378,6 +379,10 @@ code,
 }
 .table-panel {
   overflow: hidden;
+}
+.table-filter {
+  width: 180px;
+  min-height: 38px;
 }
 .table-scroll {
   width: 100%;

@@ -1,4 +1,4 @@
-import { prisma } from '@token-factory/database';
+import { prisma } from '@szrouter/database';
 import { channelCandidates, createEmbedding, findModel } from './provider.js';
 
 export type Citation = {

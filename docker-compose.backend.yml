@@ -1,4 +1,4 @@
-name: token-factory-backend
+name: szrouter-backend
 
 x-logging: &default-logging
   driver: json-file

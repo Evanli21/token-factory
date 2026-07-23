@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
@@ -13,6 +14,8 @@ type Model = {
   inputPrice: string;
   outputPrice: string;
   embeddingPrice: string;
+  inputCost?: string;
+  outputCost?: string;
   capabilities?: string[];
 };
 type ApiKey = {
@@ -32,17 +35,23 @@ type Knowledge = {
 };
 type Agent = {
   id: string;
+  userId?: string;
   slug: string;
   name: string;
   description?: string;
   modelSlug: string;
   pricePerRun: string;
+  visibility?: string;
+  status?: string;
 };
 type Workflow = {
   id: string;
   name: string;
   slug: string;
   status: string;
+  description?: string;
+  definition?: { nodes?: Array<Record<string, unknown>> };
+  version?: number;
   updatedAt: string;
 };
 type ExportTask = {
@@ -82,6 +91,35 @@ const navigation = [
   ["exports", "导出中心", "⇩"],
 ] as const;
 
+const sectionRoutes: Record<string, string> = {
+  overview: "/console",
+  keys: "/console/api-keys",
+  recharge: "/console/recharge",
+  models: "/models",
+  pricing: "/pricing",
+  playground: "/playground",
+  knowledge: "/console/knowledge",
+  agents: "/apps",
+  workflows: "/workflows",
+  tenant: "/tenant",
+  exports: "/exports",
+};
+
+function sectionFromPath(pathname: string) {
+  if (pathname.startsWith("/console/api-keys")) return "keys";
+  if (pathname.startsWith("/console/recharge")) return "recharge";
+  if (pathname.startsWith("/console/knowledge")) return "knowledge";
+  if (pathname.startsWith("/console/organizations")) return "tenant";
+  if (pathname.startsWith("/tenant")) return "tenant";
+  if (pathname.startsWith("/playground")) return "playground";
+  if (pathname.startsWith("/pricing")) return "pricing";
+  if (pathname.startsWith("/models")) return "models";
+  if (pathname.startsWith("/apps")) return "agents";
+  if (pathname.startsWith("/templates") || pathname.startsWith("/workflows")) return "workflows";
+  if (pathname.startsWith("/exports")) return "exports";
+  return "overview";
+}
+
 async function request<T>(
   path: string,
   token: string,
@@ -90,6 +128,7 @@ async function request<T>(
 ): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey || token}`,
@@ -120,9 +159,11 @@ function date(value?: string) {
 }
 
 export default function Home() {
+  const pathname = usePathname();
+  const router = useRouter();
   const [token, setToken] = useState("");
   const [checking, setChecking] = useState(true);
-  const [active, setActive] = useState("overview");
+  const [active, setActive] = useState(() => sectionFromPath(pathname));
   const [me, setMe] = useState<Me | null>(null);
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [models, setModels] = useState<Model[]>([]);
@@ -143,6 +184,7 @@ export default function Home() {
       createdAt: string;
     }>
   >([]);
+  const [transactions, setTransactions] = useState<Array<{ id: string; type: string; amount: string; balance: string; description?: string; createdAt: string }>>([]);
   const [latestKey, setLatestKey] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
@@ -160,6 +202,7 @@ export default function Home() {
         exportData,
         orgData,
         orderData,
+        transactionData,
       ] = await Promise.all([
         request<Me>("/api/me", session),
         request<{ data: ApiKey[] }>("/api/api-keys", session),
@@ -173,6 +216,7 @@ export default function Home() {
         request<{ data: ExportTask[] }>("/api/exports", session),
         request<{ data: Organization[] }>("/api/organizations", session),
         request<{ data: typeof orders }>("/api/orders", session),
+        request<{ data: typeof transactions }>("/api/transactions", session),
       ]);
       setMe(profile);
       setKeys(keyData.data);
@@ -184,7 +228,9 @@ export default function Home() {
       setExports(exportData.data);
       setOrganizations(orgData.data);
       setOrders(orderData.data);
+      setTransactions(transactionData.data);
     } catch {
+      localStorage.removeItem("szrouter_token");
       localStorage.removeItem("tf_token");
       setToken("");
       setMe(null);
@@ -194,11 +240,15 @@ export default function Home() {
   }
 
   useEffect(() => {
-    const saved = localStorage.getItem("tf_token") || "";
+    const saved = localStorage.getItem("szrouter_token") || localStorage.getItem("tf_token") || "";
     setToken(saved);
     if (saved) void load(saved);
     else setChecking(false);
   }, []);
+
+  useEffect(() => {
+    setActive(sectionFromPath(pathname));
+  }, [pathname]);
 
   function toast(message: string) {
     setNotice(message);
@@ -216,11 +266,22 @@ export default function Home() {
     }
   }
 
+  function navigate(section: string) {
+    setActive(section);
+    setMobileNav(false);
+    router.push(sectionRoutes[section] || "/console");
+  }
+
   function logout() {
+    void fetch(`${API}/api/auth/logout`, { method: "POST", credentials: "include" });
+    localStorage.removeItem("szrouter_token");
     localStorage.removeItem("tf_token");
     setToken("");
     setMe(null);
+    router.push("/login");
   }
+
+  if (pathname === "/") return <Landing />;
 
   if (checking)
     return (
@@ -229,17 +290,24 @@ export default function Home() {
         <span>Loading your workspace…</span>
       </div>
     );
-  if (!token || !me)
+  if (!token || !me) {
+    if (["/models", "/pricing", "/apps", "/templates"].includes(pathname) || pathname.startsWith("/apps/"))
+      return <PublicCatalog pathname={pathname} />;
+    if (pathname.startsWith("/workflows/")) return <PublicWorkflow id={pathname.split("/").filter(Boolean)[1] || ""} />;
     return (
       <Auth
+        initialRegister={pathname === "/register"}
+        onModeChange={(register) => router.push(register ? "/register" : "/login")}
         onAuthenticated={(session) => {
-          localStorage.setItem("tf_token", session);
+          localStorage.setItem("szrouter_token", session);
           setToken(session);
           setChecking(true);
+          router.push("/console");
           void load(session);
         }}
       />
     );
+  }
 
   const title = navigation.find(([id]) => id === active)?.[1] || "控制台";
 
@@ -259,8 +327,7 @@ export default function Home() {
               key={id}
               className={active === id ? "active" : ""}
               onClick={() => {
-                setActive(id);
-                setMobileNav(false);
+                navigate(id);
               }}
             >
               <span>{icon}</span>
@@ -305,7 +372,7 @@ export default function Home() {
               keys={keys}
               models={models}
               knowledge={knowledge}
-              onNavigate={setActive}
+              onNavigate={navigate}
             />
           )}
           {active === "keys" && (
@@ -333,12 +400,19 @@ export default function Home() {
                   await load(token);
                 })
               }
+              onStatus={(id, status) =>
+                act(async () => {
+                  await request(`/api/api-keys/${id}`, token, { method: "PATCH", body: JSON.stringify({ status }) });
+                  await load(token);
+                })
+              }
             />
           )}
           {active === "recharge" && (
             <Recharge
               balance={me.wallet.balance}
               orders={orders}
+              transactions={transactions}
               loading={loading}
               onCreate={(amount) =>
                 act(async () => {
@@ -376,6 +450,7 @@ export default function Home() {
             <KnowledgePanel
               items={knowledge}
               apiKey={latestKey}
+              token={token}
               loading={loading}
               onCreate={(name, description) =>
                 act(async () => {
@@ -408,11 +483,13 @@ export default function Home() {
               }
             />
           )}
-          {active === "agents" && <Agents items={agents} />}
+          {active === "agents" && <Agents items={agents} token={token} apiKey={latestKey} loading={loading} onRefresh={() => void load(token)} />}
           {active === "workflows" && (
             <Workflows
               items={workflows}
               templates={templates}
+              token={token}
+              apiKey={latestKey}
               loading={loading}
               onCreate={(name) =>
                 act(async () => {
@@ -430,10 +507,18 @@ export default function Home() {
                             prompt: "Create a concise draft for: {{input}}",
                           },
                           {
+                            id: "quality-gate",
+                            type: "condition",
+                            condition: "{{previous.length}} > 100",
+                            onTrue: "polish",
+                            onFalse: "finish",
+                          },
+                          {
                             id: "polish",
                             type: "llm",
                             prompt: "Polish this response: {{previous}}",
                           },
+                          { id: "finish", type: "output" },
                         ],
                       },
                     }),
@@ -447,6 +532,7 @@ export default function Home() {
           {active === "tenant" && (
             <Tenant
               items={organizations}
+              token={token}
               loading={loading}
               onCreate={(name, slug) =>
                 act(async () => {
@@ -463,6 +549,7 @@ export default function Home() {
           {active === "exports" && (
             <Exports
               items={exports}
+              token={token}
               loading={loading}
               onCreate={(type, format) =>
                 act(async () => {
@@ -483,12 +570,135 @@ export default function Home() {
   );
 }
 
+function Landing() {
+  const capabilities = [
+    ["◇", "模型广场", "统一查看可用模型、上下文窗口和实时价格。", "/models"],
+    ["＄", "价格中心", "透明展示输入、输出与向量价格。", "/pricing"],
+    ["▷", "Playground", "使用自己的 API Key 调试流式对话。", "/playground"],
+    ["✦", "Agent 市场", "创建、发布并在线体验智能应用。", "/apps"],
+    ["⌘", "Workflow", "编排节点、条件分支并发布工作流。", "/workflows"],
+    ["▤", "知识库", "上传文档、生成向量并返回可核验引用。", "/console/knowledge"],
+  ];
+  return (
+    <div className="landing">
+      <header className="landing-nav">
+        <a className="landing-logo" href="/">
+          <span className="brand-mark">SZ</span>
+          <strong>SZRouter</strong>
+        </a>
+        <nav>
+          <a href="/models">模型</a>
+          <a href="/pricing">价格</a>
+          <a href="/apps">应用</a>
+          <a href="/templates">模板</a>
+        </nav>
+        <div>
+          <a className="landing-link" href="/login">登录</a>
+          <a className="primary landing-cta" href="/register">免费开始</a>
+        </div>
+      </header>
+      <main className="landing-main">
+        <section className="landing-hero">
+          <div>
+            <span className="eyebrow">AI INFRASTRUCTURE FOR BUILDERS</span>
+            <h1>一个入口，连接你的全部 AI 能力。</h1>
+            <p>SZRouter 将模型路由、知识库、Agent、Workflow、计费与多租户管理组合成可直接上线的 AI 平台。</p>
+            <div className="button-row">
+              <a className="primary" href="/register">创建开发者账户</a>
+              <a className="secondary" href="/models">浏览模型广场</a>
+            </div>
+          </div>
+          <div className="landing-terminal">
+            <small>POST /v1/chat/completions</small>
+            <pre>{`curl https://api.szrouter.shop/v1/chat/completions \\
+  -H "Authorization: Bearer sz_••••" \\
+  -d '{"model":"gpt-4o-mini","stream":true}'`}</pre>
+            <span>● Gateway online</span>
+          </div>
+        </section>
+        <section className="landing-grid">
+          {capabilities.map(([icon, title, copy, href]) => (
+            <a href={href} key={title}>
+              <span>{icon}</span>
+              <h2>{title}</h2>
+              <p>{copy}</p>
+              <strong>打开 →</strong>
+            </a>
+          ))}
+        </section>
+      </main>
+      <footer className="landing-footer">© {new Date().getFullYear()} SZRouter · OpenAI-compatible · Tenant-aware · Observable</footer>
+    </div>
+  );
+}
+
+function PublicCatalog({ pathname }: { pathname: string }) {
+  const [data, setData] = useState<Array<Record<string, unknown>>>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const endpoint = pathname.startsWith("/apps/") ? `/api/public/agent-apps/${encodeURIComponent(pathname.split("/").filter(Boolean)[1] || "")}` : pathname === "/apps" ? "/api/public/agent-apps" : pathname === "/templates" ? "/api/public/workflow-templates" : "/api/public/models";
+  useEffect(() => {
+    setLoading(true);
+    fetch(`${API}${endpoint}`)
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body?.error?.message || "加载失败");
+        setData(body.data || []);
+        setError("");
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "加载失败"))
+      .finally(() => setLoading(false));
+  }, [endpoint]);
+  return (
+    <div className="public-page">
+      <header className="landing-nav">
+        <a className="landing-logo" href="/"><span className="brand-mark">SZ</span><strong>SZRouter</strong></a>
+        <nav><a href="/models">模型</a><a href="/pricing">价格</a><a href="/apps">应用</a><a href="/templates">模板</a></nav>
+        <div><a className="landing-link" href="/login">登录</a><a className="primary landing-cta" href="/register">免费开始</a></div>
+      </header>
+      <div className="public-content">
+        {loading && <div className="splash"><span>正在加载…</span></div>}
+        {error && <div className="error">{error}</div>}
+        {!loading && !error && pathname === "/models" && <Models models={data as unknown as Model[]} />}
+        {!loading && !error && pathname === "/pricing" && <Pricing models={data as unknown as Model[]} />}
+        {!loading && !error && pathname.startsWith("/apps") && <Agents items={data as unknown as Agent[]} />}
+        {!loading && !error && pathname === "/templates" && (
+          <>
+            <PageHead eyebrow="Workflow Library" title="模板市场" />
+            <div className="card-grid">
+              {data.map((item) => <article className="model-card" key={String(item.id)}><div className="model-icon">⌘</div><div><code>{String(item.category || "GENERAL")}</code><h3>{String(item.name)}</h3><p>{String(item.description || "可复用的 SZRouter Workflow 模板")}</p><span className="pill good">{item.featured ? "FEATURED" : "READY"}</span></div></article>)}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PublicWorkflow({ id }: { id: string }) {
+  const [workflow, setWorkflow] = useState<{ id: string; name: string; description?: string; version: number } | null>(null);
+  const [key, setKey] = useState("");
+  const [input, setInput] = useState("");
+  const [output, setOutput] = useState("");
+  useEffect(() => { fetch(`${API}/api/public/workflows/${encodeURIComponent(id)}`).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(body?.error?.message || "加载失败"); setWorkflow(body); }).catch((error) => setOutput(error instanceof Error ? error.message : "加载失败")); }, [id]);
+  async function run() {
+    if (!workflow) return;
+    try { const result = await request<{ output: string }>(`/v1/workflows/${workflow.id}/run`, "", { method: "POST", body: JSON.stringify({ input }) }, key); setOutput(result.output); }
+    catch (error) { setOutput(error instanceof Error ? error.message : "运行失败"); }
+  }
+  return <div className="public-page"><header className="landing-nav"><a className="landing-logo" href="/"><span className="brand-mark">SZ</span><strong>SZRouter</strong></a><div><a className="landing-link" href="/login">登录控制台</a></div></header><main className="public-content">{workflow && <div className="panel"><PageHead eyebrow={`PUBLISHED WORKFLOW · V${workflow.version}`} title={workflow.name}/><p>{workflow.description || "通过分享链接运行 SZRouter Workflow。"}</p><label>API Key<input type="password" value={key} onChange={(event) => setKey(event.target.value)} placeholder="sz_..."/></label><label>输入<textarea rows={6} value={input} onChange={(event) => setInput(event.target.value)}/></label><button className="primary" disabled={!key || !input} onClick={() => void run()}>运行</button>{output && <pre className="rag-answer">{output}</pre>}</div>}{!workflow && !output && <div className="splash">正在加载 Workflow…</div>}{!workflow && output && <div className="error">{output}</div>}</main></div>;
+}
+
 function Auth({
   onAuthenticated,
+  initialRegister = false,
+  onModeChange,
 }: {
   onAuthenticated: (token: string) => void;
+  initialRegister?: boolean;
+  onModeChange?: (register: boolean) => void;
 }) {
-  const [register, setRegister] = useState(false);
+  const [register, setRegister] = useState(initialRegister);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -501,6 +711,7 @@ function Auth({
         `${API}/api/auth/${register ? "register" : "login"}`,
         {
           method: "POST",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: form.get("name") || undefined,
@@ -583,7 +794,10 @@ function Auth({
           </button>
           <div className="switch">
             {register ? "已有账户？" : "还没有账户？"}{" "}
-            <button type="button" onClick={() => setRegister(!register)}>
+            <button type="button" onClick={() => {
+              setRegister(!register);
+              onModeChange?.(!register);
+            }}>
               {register ? "立即登录" : "免费注册"}
             </button>
           </div>
@@ -740,7 +954,7 @@ function Overview({
             <code>
               <i># OpenAI Compatible API</i>
               {"\n"}curl {API}/v1/chat/completions \\{"\n"} -H{" "}
-              <b>&quot;Authorization: Bearer tf_...&quot;</b> \\{"\n"} -H
+              <b>&quot;Authorization: Bearer sz_...&quot;</b> \\{"\n"} -H
               &quot;Content-Type: application/json&quot; \\{"\n"} -d {"'"}
               {"{"}
               {"\n"} &quot;model&quot;: &quot;gpt-4o-mini&quot;,{"\n"}{" "}
@@ -762,12 +976,14 @@ function Keys({
   loading,
   onCreate,
   onDelete,
+  onStatus,
 }: {
   keys: ApiKey[];
   latestKey: string;
   loading: boolean;
   onCreate: (name: string) => void;
   onDelete: (id: string) => void;
+  onStatus: (id: string, status: "ACTIVE" | "DISABLED") => void;
 }) {
   const [name, setName] = useState("Development");
   return (
@@ -831,6 +1047,12 @@ function Keys({
                 <td>{date(key.createdAt)}</td>
                 <td>
                   <button
+                    className="link-button"
+                    onClick={() => onStatus(key.id, key.status === "ACTIVE" ? "DISABLED" : "ACTIVE")}
+                  >
+                    {key.status === "ACTIVE" ? "禁用" : "启用"}
+                  </button>
+                  <button
                     className="danger-link"
                     onClick={() => onDelete(key.id)}
                   >
@@ -850,6 +1072,7 @@ function Keys({
 function Recharge({
   balance,
   orders,
+  transactions,
   loading,
   onCreate,
   onRedeem,
@@ -862,6 +1085,7 @@ function Recharge({
     status: string;
     createdAt: string;
   }>;
+  transactions: Array<{ id: string; type: string; amount: string; balance: string; description?: string; createdAt: string }>;
   loading: boolean;
   onCreate: (amount: number) => void;
   onRedeem: (code: string) => void;
@@ -908,7 +1132,7 @@ function Recharge({
             <input
               value={code}
               onChange={(event) => setCode(event.target.value)}
-              placeholder="TF-XXXXXXXXXXXXXXXXXXXX"
+              placeholder="SZ-XXXXXXXXXXXXXXXXXXXX"
             />
           </label>
           <button
@@ -947,6 +1171,11 @@ function Recharge({
           </tbody>
         </table>
         {!orders.length && <Empty>暂无充值订单。</Empty>}
+      </div>
+      <div className="panel table-wrap">
+        <PageHead eyebrow="WALLET LEDGER" title="账单流水" />
+        <table><thead><tr><th>类型</th><th>金额</th><th>变动后余额</th><th>说明</th><th>时间</th></tr></thead><tbody>{transactions.map((item) => <tr key={item.id}><td><strong>{item.type}</strong></td><td>{money(item.amount)}</td><td>{money(item.balance)}</td><td>{item.description || "—"}</td><td>{date(item.createdAt)}</td></tr>)}</tbody></table>
+        {!transactions.length && <Empty>暂无账单流水。</Empty>}
       </div>
     </>
   );
@@ -989,6 +1218,7 @@ function Models({ models }: { models: Model[] }) {
           </article>
         ))}
       </div>
+      {!models.length && <Empty>暂无已启用模型，请在 Admin 中配置模型与渠道。</Empty>}
     </>
   );
 }
@@ -1012,6 +1242,7 @@ function Pricing({ models }: { models: Model[] }) {
               <th>输入 / 1M Token</th>
               <th>输出 / 1M Token</th>
               <th>Embedding / 1M</th>
+              <th>参考成本 / 毛利</th>
               <th>上下文</th>
             </tr>
           </thead>
@@ -1026,11 +1257,13 @@ function Pricing({ models }: { models: Model[] }) {
                 <td>{money(model.inputPrice)}</td>
                 <td>{money(model.outputPrice)}</td>
                 <td>{money(model.embeddingPrice)}</td>
+                <td>{money(Number(model.inputCost || 0) + Number(model.outputCost || 0))} / {Number(model.inputPrice) + Number(model.outputPrice) > 0 ? `${(((Number(model.inputPrice) + Number(model.outputPrice) - Number(model.inputCost || 0) - Number(model.outputCost || 0)) / (Number(model.inputPrice) + Number(model.outputPrice))) * 100).toFixed(1)}%` : "—"}</td>
                 <td>{model.contextWindow.toLocaleString()}</td>
               </tr>
             ))}
           </tbody>
         </table>
+        {!models.length && <Empty>暂无价格数据。</Empty>}
       </div>
     </>
   );
@@ -1043,12 +1276,14 @@ function Playground({ models, apiKey }: { models: Model[]; apiKey: string }) {
   const [output, setOutput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [usage, setUsage] = useState<{ prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }>({});
   useEffect(() => {
     if (apiKey) setKey(apiKey);
   }, [apiKey]);
   async function run() {
     setBusy(true);
     setOutput("");
+    setUsage({});
     setError("");
     try {
       const response = await fetch(`${API}/v1/chat/completions`, {
@@ -1082,6 +1317,7 @@ function Playground({ models, apiKey }: { models: Model[]; apiKey: string }) {
           const data = JSON.parse(value);
           const delta = data.choices?.[0]?.delta?.content;
           if (delta) setOutput((current) => current + delta);
+          if (data.usage) setUsage(data.usage);
           if (data.error) throw new Error(data.error.message);
         }
       }
@@ -1140,6 +1376,7 @@ function Playground({ models, apiKey }: { models: Model[]; apiKey: string }) {
           <div className="response-head">
             <span>ASSISTANT</span>
             <i className={busy ? "pulse" : ""} />
+            <span>{usage.total_tokens || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)) ? `${usage.prompt_tokens || 0} IN · ${usage.completion_tokens || 0} OUT` : "TOKEN USAGE"}</span>
           </div>
           {error ? (
             <div className="error">{error}</div>
@@ -1157,12 +1394,14 @@ function Playground({ models, apiKey }: { models: Model[]; apiKey: string }) {
 function KnowledgePanel({
   items,
   apiKey,
+  token,
   loading,
   onCreate,
   onUpload,
 }: {
   items: Knowledge[];
   apiKey: string;
+  token: string;
   loading: boolean;
   onCreate: (name: string, description: string) => void;
   onUpload: (id: string, file: File) => void;
@@ -1172,26 +1411,67 @@ function KnowledgePanel({
   const [selected, setSelected] = useState("");
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [citations, setCitations] = useState<Array<{ document_name: string; document_id: string; chunk_id: string; score: number; excerpt: string }>>([]);
+  const [documents, setDocuments] = useState<Array<{ id: string; name: string; status: string; chunkCount: number; size: number; errorMessage?: string; updatedAt: string }>>([]);
+  const [chunks, setChunks] = useState<Array<{ id: string; content: string; tokens?: number }>>([]);
+  const [documentError, setDocumentError] = useState("");
   const [asking, setAsking] = useState(false);
   const kbId = selected || items[0]?.id || "";
+  async function loadDocuments() {
+    if (!kbId) return setDocuments([]);
+    try {
+      const result = await request<{ data: typeof documents }>(`/api/knowledge-bases/${kbId}/documents`, token);
+      setDocuments(result.data);
+      setDocumentError("");
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "文档加载失败");
+    }
+  }
+  useEffect(() => {
+    void loadDocuments();
+  }, [kbId, token]);
+
+  async function removeDocument(documentId: string) {
+    await request(`/api/knowledge-bases/${kbId}/documents/${documentId}`, token, { method: "DELETE" });
+    setChunks([]);
+    await loadDocuments();
+  }
+
+  async function reindexDocument(documentId: string) {
+    await request(`/api/knowledge-bases/${kbId}/documents/${documentId}/reindex`, token, { method: "POST" });
+    await loadDocuments();
+  }
+
+  async function viewChunks(documentId: string) {
+    const result = await request<{ data: typeof chunks }>(`/api/knowledge-bases/${kbId}/documents/${documentId}/chunks`, token);
+    setChunks(result.data);
+  }
+  async function downloadDocument(documentId: string, name: string) {
+    const response = await fetch(`${API}/api/knowledge-bases/${kbId}/documents/${documentId}/download`, { headers: { Authorization: `Bearer ${token}` }, credentials: "include" });
+    if (!response.ok) return;
+    const url = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = name; anchor.click(); URL.revokeObjectURL(url);
+  }
   async function ask() {
     setAsking(true);
     setAnswer("");
     try {
       const data = await request<{
         answer: string;
-        citations: Array<{ document_name: string; score: number }>;
+        citations: Array<{ document_name: string; document_id: string; chunk_id: string; score: number; excerpt: string }>;
       }>(
         `/v1/knowledge/${kbId}/ask`,
         "",
         { method: "POST", body: JSON.stringify({ question }) },
         apiKey,
       );
+      setCitations(data.citations);
       setAnswer(
         `${data.answer}\n\n${data.citations.map((item, index) => `[${index + 1}] ${item.document_name} · ${(item.score * 100).toFixed(0)}%`).join("\n")}`,
       );
     } catch (error) {
       setAnswer(error instanceof Error ? error.message : "问答失败");
+      setCitations([]);
     } finally {
       setAsking(false);
     }
@@ -1258,6 +1538,27 @@ function KnowledgePanel({
         </div>
       )}
       {items.length > 0 && (
+        <div className="panel table-wrap document-panel">
+          <PageHead eyebrow="DOCUMENT PIPELINE" title="文档与切片" action={<button className="secondary" onClick={() => void loadDocuments()}>↻ 刷新</button>} />
+          {documentError && <div className="error">{documentError}</div>}
+          <table>
+            <thead><tr><th>文档</th><th>状态</th><th>切片</th><th>大小</th><th>操作</th></tr></thead>
+            <tbody>
+              {documents.map((document) => (
+                <tr key={document.id}>
+                  <td><strong>{document.name}</strong>{document.errorMessage && <><br/><small className="danger-link">{document.errorMessage}</small></>}</td>
+                  <td><span className={`pill ${document.status === "READY" ? "good" : ""}`}>{document.status}</span></td>
+                  <td>{document.chunkCount}</td><td>{Math.ceil(document.size / 1024)} KB</td>
+                  <td><button className="link-button" onClick={() => void viewChunks(document.id)}>查看切片</button><button className="link-button" onClick={() => void downloadDocument(document.id, document.name)}>查看原文</button><button className="link-button" onClick={() => void reindexDocument(document.id)}>重建索引</button><button className="danger-link" onClick={() => void removeDocument(document.id)}>删除</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!documents.length && <Empty>请选择知识库并上传 PDF、DOCX、TXT 或 MD 文档。</Empty>}
+          {chunks.length > 0 && <div className="chunk-list">{chunks.map((chunk, index) => <article key={chunk.id}><span>CHUNK {index + 1} · {chunk.tokens || 0} TOKENS</span><p>{chunk.content}</p></article>)}</div>}
+        </div>
+      )}
+      {items.length > 0 && (
         <div className="panel ask-box">
           <PageHead eyebrow="HYBRID SEARCH + RERANK" title="知识库问答" />
           <div className="ask-row">
@@ -1275,6 +1576,7 @@ function KnowledgePanel({
             </button>
           </div>
           {answer && <pre className="rag-answer">{answer}</pre>}{" "}
+          {citations.length > 0 && <div className="citation-grid">{citations.map((citation, index) => <article key={citation.chunk_id}><strong>[{index + 1}] {citation.document_name}</strong><span>{(citation.score * 100).toFixed(0)}% match</span><p><mark>{citation.excerpt}</mark></p><button className="link-button" onClick={() => void viewChunks(citation.document_id)}>查看原文切片</button></article>)}</div>}
           {!apiKey && <p className="muted">请先创建 API Key，再进行问答。</p>}
         </div>
       )}
@@ -1282,29 +1584,63 @@ function KnowledgePanel({
   );
 }
 
-function Agents({ items }: { items: Agent[] }) {
+function Agents({ items, token, apiKey = "", loading = false, onRefresh }: { items: Agent[]; token?: string; apiKey?: string; loading?: boolean; onRefresh?: () => void }) {
+  const [name, setName] = useState("智能客服");
+  const [modelSlug, setModelSlug] = useState("gpt-4o-mini");
+  const [systemPrompt, setSystemPrompt] = useState("你是专业、准确的 SZRouter 智能客服。");
+  const [selected, setSelected] = useState("");
+  const [key, setKey] = useState(apiKey);
+  const [message, setMessage] = useState("介绍一下你的能力");
+  const [response, setResponse] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (apiKey) setKey(apiKey); }, [apiKey]);
+  async function createAgent() {
+    if (!token) return;
+    setBusy(true);
+    try {
+      await request("/api/agent-apps", token, { method: "POST", body: JSON.stringify({ name, slug: `${name.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-") || "agent"}-${Date.now().toString().slice(-6)}`, systemPrompt, modelSlug, description: "Created in SZRouter Console" }) });
+      onRefresh?.();
+    } finally { setBusy(false); }
+  }
+  async function publishAgent(id: string) {
+    if (!token) return;
+    await request(`/api/agent-apps/${id}/publish`, token, { method: "POST" });
+    onRefresh?.();
+  }
+  async function chat() {
+    if (!selected || !key) return;
+    setBusy(true); setResponse("");
+    try {
+      const data = await request<{ choices?: Array<{ message?: { content?: string } }> }>(`/v1/agent/apps/${selected}/chat`, "", { method: "POST", body: JSON.stringify({ messages: [{ role: "user", content: message }] }) }, key);
+      setResponse(data.choices?.[0]?.message?.content || "Agent 未返回文本内容");
+    } catch (error) { setResponse(error instanceof Error ? error.message : "体验失败"); }
+    finally { setBusy(false); }
+  }
   return (
     <>
-      <PageHead eyebrow="AGENT APPLICATIONS" title="Agent 应用市场" />
+      <PageHead eyebrow="AGENT APPLICATIONS" title="Agent 应用市场" action={token ? <button className="primary" disabled={loading || busy} onClick={() => void createAgent()}>＋ 创建应用</button> : undefined} />
+      {token && <div className="panel agent-builder"><label>应用名称<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>模型<input value={modelSlug} onChange={(event) => setModelSlug(event.target.value)} /></label><label>系统提示词<textarea rows={3} value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} /></label></div>}
       <div className="card-grid">
         {items.map((item, index) => (
-          <article className="agent-card" key={item.id}>
+          <article className={`agent-card ${selected === item.id ? "selected-card" : ""}`} key={item.id} onClick={() => setSelected(item.id)}>
             <div className={`agent-art art-${index % 3}`}>
               <span>✦</span>
             </div>
             <div>
-              <span className="pill">PUBLIC</span>
+              <span className="pill">{item.visibility || "PUBLIC"}</span>
               <h3>{item.name}</h3>
               <p>{item.description || "Composable agent application."}</p>
               <div className="agent-foot">
                 <code>{item.modelSlug}</code>
                 <strong>{money(item.pricePerRun)} / run</strong>
               </div>
+              {token && item.visibility !== "PUBLIC" && <button className="secondary wide" onClick={(event) => { event.stopPropagation(); void publishAgent(item.id); }}>发布应用</button>}
             </div>
           </article>
         ))}
       </div>
       {!items.length && <Empty>暂无公开 Agent 应用。</Empty>}
+      {items.length > 0 && token && <div className="panel agent-play"><PageHead eyebrow="ONLINE EXPERIENCE" title="在线体验" /><div className="inline-form"><input type="password" value={key} onChange={(event) => setKey(event.target.value)} placeholder="sz_ API Key"/><input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="输入消息"/><button className="primary" disabled={!selected || !key || busy} onClick={() => void chat()}>{busy ? "运行中…" : "发送"}</button></div>{response && <pre className="rag-answer">{response}</pre>}</div>}
     </>
   );
 }
@@ -1312,15 +1648,46 @@ function Agents({ items }: { items: Agent[] }) {
 function Workflows({
   items,
   templates,
+  token,
+  apiKey,
   loading,
   onCreate,
 }: {
   items: Workflow[];
   templates: Array<{ id: string; name: string; description?: string }>;
+  token: string;
+  apiKey: string;
   loading: boolean;
   onCreate: (name: string) => void;
 }) {
   const [name, setName] = useState("内容加工流水线");
+  const [selectedId, setSelectedId] = useState("");
+  const selected = items.find((item) => item.id === selectedId) || items[0];
+  const [definition, setDefinition] = useState("");
+  const [runInput, setRunInput] = useState("为 SZRouter 写一段发布文案");
+  const [runOutput, setRunOutput] = useState("");
+  const [share, setShare] = useState("");
+  useEffect(() => {
+    setDefinition(JSON.stringify(selected?.definition || { nodes: [] }, null, 2));
+    if (selected) setSelectedId(selected.id);
+  }, [selected?.id]);
+  async function saveWorkflow() {
+    if (!selected) return;
+    await request(`/api/workflows/${selected.id}`, token, { method: "PATCH", body: JSON.stringify({ definition: JSON.parse(definition) }) });
+    setRunOutput("Workflow 已保存");
+  }
+  async function publishWorkflow() {
+    if (!selected) return;
+    const result = await request<{ shareUrl: string; embedCode: string }>(`/api/workflows/${selected.id}/publish`, token, { method: "POST" });
+    setShare(`${result.shareUrl}\n${result.embedCode}`);
+  }
+  async function runWorkflow() {
+    if (!selected || !apiKey) return;
+    try {
+      const result = await request<{ output: string; trace: unknown[] }>(`/v1/workflows/${selected.id}/run`, "", { method: "POST", body: JSON.stringify({ input: runInput }) }, apiKey);
+      setRunOutput(`${result.output}\n\nTRACE\n${JSON.stringify(result.trace, null, 2)}`);
+    } catch (error) { setRunOutput(error instanceof Error ? error.message : "运行失败"); }
+  }
   return (
     <>
       <PageHead
@@ -1354,6 +1721,11 @@ function Workflows({
         </div>
         <i>→</i>
         <div className="flow-node">
+          <small>CONDITION</small>
+          <strong>质量分支</strong>
+        </div>
+        <i>→</i>
+        <div className="flow-node">
           <small>LLM</small>
           <strong>润色输出</strong>
         </div>
@@ -1362,13 +1734,13 @@ function Workflows({
         <article className="panel">
           <PageHead eyebrow="MY WORKFLOWS" title="已创建" />
           {items.map((item) => (
-            <div className="list-row" key={item.id}>
+            <button className={`list-row workflow-select ${selected?.id === item.id ? "selected-row" : ""}`} key={item.id} onClick={() => setSelectedId(item.id)}>
               <div>
                 <strong>{item.name}</strong>
                 <code>{item.slug}</code>
               </div>
               <span className="pill">{item.status}</span>
-            </div>
+            </button>
           ))}
           {!items.length && <Empty>暂无 Workflow。</Empty>}
         </article>
@@ -1385,20 +1757,31 @@ function Workflows({
           ))}
         </article>
       </div>
+      {selected && <div className="two-column workflow-editor"><article className="panel"><PageHead eyebrow={`VERSION ${selected.version || 1}`} title="节点配置"/><textarea rows={16} value={definition} onChange={(event) => setDefinition(event.target.value)} /><div className="button-row"><button className="primary" onClick={() => void saveWorkflow()}>保存</button><button className="secondary" onClick={() => void publishWorkflow()}>发布 / 分享</button></div>{share && <pre className="rag-answer">{share}</pre>}</article><article className="panel"><PageHead eyebrow="DEBUG RUN" title="调试运行"/><label>输入<textarea rows={6} value={runInput} onChange={(event) => setRunInput(event.target.value)} /></label><button className="primary wide" disabled={!apiKey} onClick={() => void runWorkflow()}>运行 Workflow</button>{!apiKey && <p className="muted">请先创建 API Key。</p>}{runOutput && <pre className="rag-answer">{runOutput}</pre>}</article></div>}
     </>
   );
 }
 
 function Tenant({
   items,
+  token,
   loading,
   onCreate,
 }: {
   items: Organization[];
+  token: string;
   loading: boolean;
   onCreate: (name: string, slug: string) => void;
 }) {
   const [name, setName] = useState("My Organization");
+  const [selectedId, setSelectedId] = useState("");
+  const [members, setMembers] = useState<Array<{ id: string; role: string; status: string; user: { email: string; name?: string } }>>([]);
+  const [billing, setBilling] = useState<{ wallet?: { balance: string; frozen: string }; transactions?: Array<Record<string, unknown>>; invoices?: Array<Record<string, unknown>> }>({});
+  const [analytics, setAnalytics] = useState<Record<string, unknown>>({});
+  const [resources, setResources] = useState<{ apiKeys: Array<Record<string, unknown>>; apps: Array<Record<string, unknown>>; workflows: Array<Record<string, unknown>> }>({ apiKeys: [], apps: [], workflows: [] });
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [orgKey, setOrgKey] = useState("");
+  const organizationId = selectedId || items[0]?.id || "";
   const slug = useMemo(
     () =>
       name
@@ -1407,6 +1790,33 @@ function Tenant({
         .replace(/^-|-$/g, ""),
     [name],
   );
+  async function loadTenant() {
+    if (!organizationId) return;
+    const [memberData, billingData, analyticsData, resourceData] = await Promise.all([
+      request<{ data: typeof members }>(`/api/organizations/${organizationId}/members`, token),
+      request<typeof billing>(`/api/organizations/${organizationId}/billing`, token),
+      request<Record<string, unknown>>(`/api/organizations/${organizationId}/analytics`, token),
+      request<typeof resources>(`/api/organizations/${organizationId}/resources`, token),
+    ]);
+    setMembers(memberData.data); setBilling(billingData); setAnalytics(analyticsData); setResources(resourceData);
+  }
+  useEffect(() => { void loadTenant(); }, [organizationId, token]);
+  async function invite() {
+    await request(`/api/organizations/${organizationId}/members`, token, { method: "POST", body: JSON.stringify({ email: inviteEmail, role: "MEMBER" }) });
+    setInviteEmail(""); await loadTenant();
+  }
+  async function createOrganizationKey() {
+    const result = await request<{ key: string }>("/api/api-keys", token, { method: "POST", body: JSON.stringify({ name: "Organization Key", organizationId }) });
+    setOrgKey(result.key);
+  }
+  async function createOrganizationApp() {
+    await request("/api/agent-apps", token, { method: "POST", body: JSON.stringify({ name: "Tenant Assistant", slug: `tenant-assistant-${Date.now().toString().slice(-6)}`, systemPrompt: "You are a helpful tenant assistant.", modelSlug: "gpt-4o-mini", organizationId }) });
+    await loadTenant();
+  }
+  async function createOrganizationWorkflow() {
+    await request("/api/workflows", token, { method: "POST", body: JSON.stringify({ name: "Tenant Workflow", slug: `tenant-workflow-${Date.now().toString().slice(-6)}`, organizationId, definition: { nodes: [{ id: "generate", type: "llm", prompt: "Process: {{input}}" }] } }) });
+    await loadTenant();
+  }
   return (
     <>
       <PageHead
@@ -1430,7 +1840,7 @@ function Tenant({
       />
       <div className="card-grid">
         {items.map((item) => (
-          <article className="org-card" key={item.id}>
+          <article className={`org-card ${organizationId === item.id ? "selected-card" : ""}`} key={item.id} onClick={() => setSelectedId(item.id)}>
             <div className="org-monogram">
               {item.name.slice(0, 2).toUpperCase()}
             </div>
@@ -1454,21 +1864,33 @@ function Tenant({
       {!items.length && (
         <Empty>创建组织后即可使用组织余额、月度额度与成员管理。</Empty>
       )}
+      {organizationId && <><nav className="tenant-tabs"><a href="/tenant/members">成员</a><a href="/tenant/api-keys">API Key</a><a href="/tenant/apps">应用</a><a href="/tenant/workflows">Workflow</a><a href="/tenant/billing">账单</a><a href="/tenant/analytics">调用大盘</a></nav><div className="two-column tenant-detail"><article className="panel"><PageHead eyebrow="MEMBERS & ACCESS" title="成员管理" action={<div className="inline-form"><input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="member@example.com"/><button className="primary" disabled={!inviteEmail} onClick={() => void invite()}>添加成员</button></div>}/>{members.map((member) => <div className="list-row" key={member.id}><div><strong>{member.user.name || member.user.email}</strong><p>{member.user.email}</p></div><span className="pill">{member.role} · {member.status}</span></div>)}</article><article className="panel"><PageHead eyebrow="TENANT CREDENTIALS" title="租户 API Key"/><button className="primary" onClick={() => void createOrganizationKey()}>创建租户 Key</button>{orgKey && <div className="secret-reveal"><div><strong>仅显示一次</strong><code>{orgKey}</code></div><button onClick={() => navigator.clipboard.writeText(orgKey)}>复制</button></div>}<p className="muted">已创建 {resources.apiKeys.length} 个组织 Key。调用费用从组织钱包结算，并受组织额度限制。</p></article></div><div className="two-column tenant-detail"><article className="panel"><PageHead eyebrow="TENANT RESOURCES" title="应用与 Workflow"/><div className="button-row"><button className="primary" onClick={() => void createOrganizationApp()}>创建租户应用</button><button className="secondary" onClick={() => void createOrganizationWorkflow()}>创建租户 Workflow</button></div><p className="muted">应用：{resources.apps.length} · Workflow：{resources.workflows.length}</p>{[...resources.apps, ...resources.workflows].map((item) => <div className="list-row" key={String(item.id)}><strong>{String(item.name)}</strong><span className="pill">{String(item.status)}</span></div>)}</article><article className="panel"><PageHead eyebrow="BILLING" title="租户账单"/><div className="metric-grid compact"><div className="metric lime"><small>余额</small><strong>{money(billing.wallet?.balance)}</strong></div><div className="metric violet"><small>冻结</small><strong>{money(billing.wallet?.frozen)}</strong></div></div><p className="muted">月结账单：{billing.invoices?.length || 0} · 流水：{billing.transactions?.length || 0}</p></article></div><article className="panel"><PageHead eyebrow="30 DAY ANALYTICS" title="调用大盘"/><pre className="rag-answer">{JSON.stringify(analytics, null, 2)}</pre><p className="muted">租户应用与 Workflow 使用同一组织身份、钱包和用量统计。</p></article></>}
     </>
   );
 }
 
 function Exports({
   items,
+  token,
   loading,
   onCreate,
 }: {
   items: ExportTask[];
+  token: string;
   loading: boolean;
   onCreate: (type: string, format: string) => void;
 }) {
   const [type, setType] = useState("USAGE");
   const [format, setFormat] = useState("CSV");
+  async function download(item: ExportTask) {
+    const response = await fetch(`${API}/api/exports/${item.id}/download`, { headers: { Authorization: `Bearer ${token}` }, credentials: "include" });
+    if (!response.ok) return;
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url; anchor.download = `szrouter-${item.type.toLocaleLowerCase()}.${item.format.toLocaleLowerCase()}`; anchor.click();
+    URL.revokeObjectURL(url);
+  }
   return (
     <>
       <PageHead
@@ -1533,7 +1955,7 @@ function Exports({
                   </div>
                 </td>
                 <td>{date(item.createdAt)}</td>
-                <td>{item.fileUrl ? <span>已生成</span> : "—"}</td>
+                <td>{item.fileUrl ? <button className="link-button" onClick={() => void download(item)}>下载</button> : "—"}</td>
               </tr>
             ))}
           </tbody>

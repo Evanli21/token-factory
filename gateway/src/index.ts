@@ -5,12 +5,14 @@ import helmet from 'helmet';
 import pino from 'pino';
 import { pinoHttp } from 'pino-http';
 import { ZodError } from 'zod';
-import { Prisma, prisma } from '@token-factory/database';
+import { Prisma, prisma } from '@szrouter/database';
 import { config, corsOrigins } from './config.js';
 import { authRouter } from './routes/auth.js';
 import { accountRouter } from './routes/account.js';
 import { adminRouter } from './routes/admin.js';
 import { v1Router } from './routes/v1.js';
+import { publicRouter } from './routes/public.js';
+import { internalRouter } from './routes/internal.js';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const app = express();
@@ -29,9 +31,11 @@ app.use((req, res, next) => {
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'szrouter-gateway' }));
 app.get('/', (_req, res) => res.json({ name: 'SZRouter Gateway', version: '1.0.0', docs: '/v1/models', health: '/health' }));
 app.use('/api/auth', authRouter);
+app.use('/api/public', publicRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api', accountRouter);
 app.use('/v1', v1Router);
+app.use('/internal', internalRouter);
 
 app.use((_req, res) => res.status(404).json({ error: { message: 'Route not found', type: 'not_found_error' } }));
 

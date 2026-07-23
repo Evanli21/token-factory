@@ -9,7 +9,7 @@ export function apiKeyHash(value: string) {
 }
 
 export function issueApiKey() {
-  const value = `tf_${randomBytes(30).toString('base64url')}`;
+  const value = `sz_${randomBytes(30).toString('base64url')}`;
   return { value, prefix: value.slice(0, 12), hash: apiKeyHash(value) };
 }
 

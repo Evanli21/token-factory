@@ -7,9 +7,9 @@ coverage/
 .env.local
 .env.production
 !.env.example
-logs/
-uploads/
-exports/
+/logs/
+/uploads/
+/exports/
 *.log
 .DS_Store
 token-factory.zip

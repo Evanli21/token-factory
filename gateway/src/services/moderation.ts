@@ -1,4 +1,4 @@
-import { prisma } from '@token-factory/database';
+import { prisma } from '@szrouter/database';
 
 export async function moderate(content: string, userId: string, requestId: string) {
   const rules = await prisma.moderationRule.findMany({ where: { enabled: true }, orderBy: { priority: 'asc' } });

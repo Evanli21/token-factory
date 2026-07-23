@@ -14,12 +14,12 @@ COPY packages/database/package.json packages/database/package.json
 RUN npm ci
 COPY . .
 RUN npm run prisma:generate \
- && npm run build -w @token-factory/database \
- && npm run build -w @token-factory/gateway
+ && npm run build -w @szrouter/database \
+ && npm run build -w @szrouter/gateway
 
 FROM base AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app /app
 EXPOSE 8000
-CMD ["sh", "-c", "npm run db:push && npm run db:seed && npm run start -w @token-factory/gateway"]
+CMD ["sh", "-c", "npm run db:push && npm run db:seed && npm run start -w @szrouter/gateway"]

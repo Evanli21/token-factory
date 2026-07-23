@@ -1,5 +1,5 @@
 {
-  "name": "token-factory",
+  "name": "szrouter",
   "version": "1.0.0",
   "private": true,
   "workspaces": [
@@ -10,10 +10,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n gateway,worker,web,admin -c blue,magenta,green,yellow \"npm run dev -w @token-factory/gateway\" \"npm run dev -w @token-factory/worker\" \"npm run dev -w @token-factory/web\" \"npm run dev -w @token-factory/admin\"",
-    "build": "npm run prisma:generate && npm run build -w @token-factory/database && npm run build -w @token-factory/gateway && npm run build -w @token-factory/worker && npm run build -w @token-factory/web && npm run build -w @token-factory/admin",
-    "typecheck": "npm run prisma:generate && npm run build -w @token-factory/database && npm run typecheck -w @token-factory/gateway && npm run typecheck -w @token-factory/worker && npm run typecheck -w @token-factory/web && npm run typecheck -w @token-factory/admin",
-    "test": "npm run test -w @token-factory/gateway",
+    "dev": "concurrently -n gateway,worker,web,admin -c blue,magenta,green,yellow \"npm run dev -w @szrouter/gateway\" \"npm run dev -w @szrouter/worker\" \"npm run dev -w @szrouter/web\" \"npm run dev -w @szrouter/admin\"",
+    "build": "npm run prisma:generate && npm run build -w @szrouter/database && npm run build -w @szrouter/gateway && npm run build -w @szrouter/worker && npm run build -w @szrouter/web && npm run build -w @szrouter/admin",
+    "typecheck": "npm run prisma:generate && npm run build -w @szrouter/database && npm run typecheck -w @szrouter/gateway && npm run typecheck -w @szrouter/worker && npm run typecheck -w @szrouter/web && npm run typecheck -w @szrouter/admin",
+    "test": "npm run test -w @szrouter/gateway",
     "prisma:generate": "prisma generate --schema packages/database/prisma/schema.prisma",
     "db:push": "prisma db push --schema packages/database/prisma/schema.prisma && npm run db:sql",
     "db:migrate": "prisma migrate deploy --schema packages/database/prisma/schema.prisma",
@@ -23,10 +23,12 @@
     "pack": "bash scripts/package.sh"
   },
   "devDependencies": {
+    "autoprefixer": "^10.4.21",
     "concurrently": "^9.2.0",
     "postcss": "8.5.22",
     "prisma": "^6.12.0",
     "sharp": "0.35.3",
+    "tailwindcss": "^3.4.17",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3"
   },

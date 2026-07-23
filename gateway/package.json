@@ -1,5 +1,5 @@
 {
-  "name": "@token-factory/gateway",
+  "name": "@szrouter/gateway",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@token-factory/database": "1.0.0",
+    "@szrouter/database": "1.0.0",
     "bcryptjs": "^3.0.2",
     "bullmq": "^5.56.3",
     "cors": "^2.8.5",

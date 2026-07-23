@@ -6,7 +6,7 @@ Base URL：`https://api.yourdomain.com`。所有 `/v1/*` 路由都要求 SZRoute
 
 ```http
 GET /v1/models
-Authorization: Bearer tf_...
+Authorization: Bearer sz_...
 ```
 
 ## Chat Completions

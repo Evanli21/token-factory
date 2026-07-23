@@ -8,13 +8,14 @@ import mammoth from 'mammoth';
 import pdf from 'pdf-parse';
 import PDFDocument from 'pdfkit';
 import pino from 'pino';
-import { prisma } from '@token-factory/database';
+import { prisma } from '@szrouter/database';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const uploadDir = process.env.UPLOAD_DIR || './uploads';
 const exportDir = process.env.EXPORT_DIR || './exports';
-const queue = new Queue('token-factory', { connection: { url: redisUrl } });
+const queueName = 'szrouter';
+const queue = new Queue(queueName, { connection: { url: redisUrl }, defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 2_000 }, removeOnComplete: 500, removeOnFail: 500 } });
 
 function enabled(name: string, defaultValue = false) {
   const value = process.env[name];
@@ -124,12 +125,51 @@ async function sendEmail(data: { to: string; subject: string; html: string }) {
   return response.json();
 }
 
+async function completeText(options: { apiKey?: string; baseUrl?: string; model: string; messages: Array<{ role: string; content: string }> }) {
+  if (!options.apiKey) return '';
+  const baseUrl = (options.baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: options.model, messages: options.messages, stream: false, temperature: 0 }),
+  });
+  if (!response.ok) throw new Error(`Evaluation upstream ${response.status}: ${(await response.text()).slice(0, 500)}`);
+  const body = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+  return body.choices?.[0]?.message?.content || '';
+}
+
+function lexicalScore(expected: string, actual: string) {
+  const expectedTerms = new Set(expected.toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  if (!expectedTerms.size) return 0;
+  const actualTerms = new Set(actual.toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  return [...expectedTerms].filter((term) => actualTerms.has(term)).length / expectedTerms.size;
+}
+
+async function judge(expected: string | null, actual: string) {
+  if (!expected) return { score: actual.trim() ? 1 : 0, method: 'non_empty' };
+  if (enabled('ENABLE_LLM_EVAL') && (process.env.RAG_CHAT_API_KEY || process.env.OPENAI_API_KEY)) {
+    const result = await completeText({
+      apiKey: process.env.RAG_CHAT_API_KEY || process.env.OPENAI_API_KEY,
+      baseUrl: process.env.RAG_CHAT_BASE_URL || process.env.OPENAI_BASE_URL,
+      model: process.env.RAG_CHAT_MODEL || 'gpt-4o-mini',
+      messages: [{ role: 'system', content: 'Score the candidate answer against the reference from 0 to 1. Return JSON only: {"score":number,"reason":string}.' }, { role: 'user', content: `REFERENCE:\n${expected}\n\nCANDIDATE:\n${actual}` }],
+    });
+    try {
+      const parsed = JSON.parse(result.replace(/^```json\s*|\s*```$/g, '')) as { score?: number; reason?: string };
+      return { score: Math.min(1, Math.max(0, Number(parsed.score || 0))), method: 'llm_judge', reason: parsed.reason };
+    } catch {
+      return { score: lexicalScore(expected, actual), method: 'lexical_fallback' };
+    }
+  }
+  return { score: lexicalScore(expected, actual), method: 'lexical' };
+}
+
 async function deliverWebhook(deliveryId: string) {
   const delivery = await prisma.webhookDelivery.findUnique({ where: { id: deliveryId }, include: { endpoint: true } });
   if (!delivery) throw new Error('Webhook delivery not found');
   const body = JSON.stringify(delivery.payload);
   const signature = createHmac('sha256', delivery.endpoint.secret).update(body).digest('hex');
-  const response = await fetch(delivery.endpoint.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Token-Factory-Event': delivery.event, 'X-Token-Factory-Signature': `sha256=${signature}` }, body });
+  const response = await fetch(delivery.endpoint.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-SZRouter-Event': delivery.event, 'X-SZRouter-Signature': `sha256=${signature}` }, body });
   await prisma.webhookDelivery.update({ where: { id: delivery.id }, data: { attempts: { increment: 1 }, status: response.ok ? 'DELIVERED' : 'RETRYING', response: `${response.status} ${(await response.text()).slice(0, 1000)}`, nextRetryAt: response.ok ? null : new Date(Date.now() + 60_000) } });
   if (!response.ok) throw new Error(`Webhook returned ${response.status}`);
 }
@@ -192,50 +232,149 @@ async function evaluateKnowledge(runId: string) {
   const run = await prisma.knowledgeEvalRun.findUnique({ where: { id: runId }, include: { dataset: { include: { cases: true } } } });
   if (!run) throw new Error('Knowledge evaluation run not found');
   await prisma.knowledgeEvalRun.update({ where: { id: run.id }, data: { status: 'RUNNING', startedAt: new Date() } });
-  for (const testCase of run.dataset.cases) await prisma.knowledgeEvalResult.upsert({ where: { runId_caseId: { runId: run.id, caseId: testCase.id } }, create: { runId: run.id, caseId: testCase.id, score: 0, metrics: { note: 'Queue an application-specific evaluator to populate this result.' } }, update: {} });
-  await prisma.knowledgeEvalRun.update({ where: { id: run.id }, data: { status: 'COMPLETED', completedAt: new Date(), metrics: { cases: run.dataset.cases.length } } });
+  let scoreSum = 0;
+  for (const testCase of run.dataset.cases) {
+    const response = await fetch(`${(process.env.INTERNAL_API_URL || 'http://gateway:8000').replace(/\/$/, '')}/internal/knowledge/search`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Internal-Token': process.env.INTERNAL_API_TOKEN || '' }, body: JSON.stringify({ knowledge_base_id: run.dataset.knowledgeBaseId, query: testCase.question, top_k: 6 }) });
+    if (!response.ok) throw new Error(`Knowledge search ${response.status}: ${(await response.text()).slice(0, 500)}`);
+    const search = await response.json() as { data: Array<{ document_name: string; content: string; score: number }> };
+    const sourceText = search.data.map((item, index) => `[${index + 1}] ${item.document_name}\n${item.content}`).join('\n\n');
+    const answer = await completeText({ apiKey: process.env.RAG_CHAT_API_KEY || process.env.OPENAI_API_KEY, baseUrl: process.env.RAG_CHAT_BASE_URL || process.env.OPENAI_BASE_URL, model: process.env.RAG_CHAT_MODEL || 'gpt-4o-mini', messages: [{ role: 'system', content: `Answer using only these sources and cite them:\n${sourceText}` }, { role: 'user', content: testCase.question }] }) || search.data[0]?.content || 'No relevant source was found.';
+    const assessment = await judge(testCase.expectedAnswer, answer);
+    scoreSum += assessment.score;
+    await prisma.knowledgeEvalResult.upsert({ where: { runId_caseId: { runId: run.id, caseId: testCase.id } }, create: { runId: run.id, caseId: testCase.id, answer, sources: search.data, score: assessment.score, metrics: assessment }, update: { answer, sources: search.data, score: assessment.score, metrics: assessment } });
+  }
+  await prisma.knowledgeEvalRun.update({ where: { id: run.id }, data: { status: 'COMPLETED', completedAt: new Date(), metrics: { cases: run.dataset.cases.length, averageScore: run.dataset.cases.length ? scoreSum / run.dataset.cases.length : 0 } } });
 }
 
 async function evaluateAgent(runId: string) {
-  const run = await prisma.agentEvalRun.findUnique({ where: { id: runId }, include: { dataset: { include: { cases: true } } } });
+  const run = await prisma.agentEvalRun.findUnique({ where: { id: runId }, include: { dataset: { include: { cases: true, agentApp: true } } } });
   if (!run) throw new Error('Agent evaluation run not found');
   await prisma.agentEvalRun.update({ where: { id: run.id }, data: { status: 'RUNNING', startedAt: new Date() } });
-  for (const testCase of run.dataset.cases) await prisma.agentEvalResult.upsert({ where: { runId_caseId: { runId: run.id, caseId: testCase.id } }, create: { runId: run.id, caseId: testCase.id, score: 0, metrics: { note: 'Queue an application-specific evaluator to populate this result.' } }, update: {} });
-  await prisma.agentEvalRun.update({ where: { id: run.id }, data: { status: 'COMPLETED', completedAt: new Date(), metrics: { cases: run.dataset.cases.length } } });
+  let scoreSum = 0;
+  for (const testCase of run.dataset.cases) {
+    const input = typeof testCase.input === 'string' ? testCase.input : JSON.stringify(testCase.input);
+    const output = await completeText({ apiKey: process.env.AGENT_CHAT_API_KEY || process.env.OPENAI_API_KEY, baseUrl: process.env.AGENT_CHAT_BASE_URL || process.env.OPENAI_BASE_URL, model: process.env.AGENT_CHAT_MODEL || run.dataset.agentApp.modelSlug, messages: [{ role: 'system', content: run.dataset.agentApp.systemPrompt }, { role: 'user', content: input }] });
+    const assessment = await judge(testCase.expectedOutput, output);
+    scoreSum += assessment.score;
+    await prisma.agentEvalResult.upsert({ where: { runId_caseId: { runId: run.id, caseId: testCase.id } }, create: { runId: run.id, caseId: testCase.id, output, toolCalls: [], score: assessment.score, metrics: assessment }, update: { output, toolCalls: [], score: assessment.score, metrics: assessment } });
+  }
+  await prisma.agentEvalRun.update({ where: { id: run.id }, data: { status: 'COMPLETED', completedAt: new Date(), metrics: { cases: run.dataset.cases.length, averageScore: run.dataset.cases.length ? scoreSum / run.dataset.cases.length : 0 } } });
 }
 
-const worker = new Worker('token-factory', async (job) => {
+const worker = new Worker(queueName, async (job) => {
   logger.info({ jobId: job.id, name: job.name }, 'job started');
   switch (job.name) {
+    case 'knowledge_parse':
     case 'parse-document': return parseDocument(String(job.data.documentId), job);
+    case 'export_task':
     case 'export': return runExport(String(job.data.exportTaskId));
+    case 'send_email':
     case 'email': return sendEmail(job.data as { to: string; subject: string; html: string });
+    case 'webhook_retry':
     case 'webhook': return deliverWebhook(String(job.data.deliveryId));
+    case 'monthly_billing':
     case 'monthly-report': return createMonthlyInvoices();
+    case 'reconciliation':
     case 'reconcile': return reconcile();
+    case 'alert_checks':
     case 'alerts': return generateAlerts();
+    case 'log_cleanup':
     case 'cleanup': return cleanup();
+    case 'knowledge_eval':
     case 'knowledge-eval': return evaluateKnowledge(String(job.data.runId));
+    case 'agent_eval':
     case 'agent-eval': return evaluateAgent(String(job.data.runId));
     default: throw new Error(`Unknown job: ${job.name}`);
   }
 }, { connection: { url: redisUrl }, concurrency: Math.max(1, Number(process.env.WORKER_CONCURRENCY || 1)) });
 
-worker.on('completed', (job) => logger.info({ jobId: job.id, name: job.name }, 'job completed'));
-worker.on('failed', (job, error) => logger.error({ jobId: job?.id, name: job?.name, error: error.message }, 'job failed'));
+worker.on('active', (job) => {
+  void prisma.backgroundJob.updateMany({
+    where: job.data.backgroundJobId ? { id: String(job.data.backgroundJobId) } : { queueId: String(job.id) },
+    data: { status: 'RUNNING', startedAt: new Date(), attempts: { increment: 1 } },
+  }).catch(() => undefined);
+});
+worker.on('progress', (job, progress) => {
+  const value = typeof progress === 'number' ? Math.round(progress) : Number((progress as { value?: number })?.value || 0);
+  void prisma.backgroundJob.updateMany({
+    where: job.data.backgroundJobId ? { id: String(job.data.backgroundJobId) } : { queueId: String(job.id) },
+    data: { progress: Math.min(100, Math.max(0, value)) },
+  }).catch(() => undefined);
+});
+worker.on('completed', (job, result) => {
+  logger.info({ jobId: job.id, name: job.name }, 'job completed');
+  void prisma.backgroundJob.updateMany({
+    where: job.data.backgroundJobId ? { id: String(job.data.backgroundJobId) } : { queueId: String(job.id) },
+    data: { status: 'COMPLETED', progress: 100, result: result == null ? undefined : JSON.parse(JSON.stringify(result)), finishedAt: new Date(), error: null },
+  }).catch(() => undefined);
+});
+worker.on('failed', (job, error) => {
+  logger.error({ jobId: job?.id, name: job?.name, error: error.message }, 'job failed');
+  if (job) void prisma.backgroundJob.updateMany({
+    where: job.data.backgroundJobId ? { id: String(job.data.backgroundJobId) } : { queueId: String(job.id) },
+    data: { status: 'FAILED', error: error.message.slice(0, 4000), finishedAt: new Date() },
+  }).catch(() => undefined);
+});
 worker.on('error', (error) => logger.error({ error: error.message }, 'worker error'));
+
+async function enqueueDatabaseJobs() {
+  const pending = await prisma.backgroundJob.findMany({
+    where: { status: 'PENDING', OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] },
+    orderBy: { createdAt: 'asc' },
+    take: 50,
+  });
+  for (const item of pending) {
+    const claimed = await prisma.backgroundJob.updateMany({ where: { id: item.id, status: 'PENDING' }, data: { status: 'QUEUING' } });
+    if (!claimed.count) continue;
+    try {
+      const payload = item.payload && typeof item.payload === 'object' && !Array.isArray(item.payload) ? item.payload as Record<string, unknown> : {};
+      const queued = await queue.add(item.type, { ...payload, backgroundJobId: item.id }, { jobId: `db-${item.id}` });
+      await prisma.backgroundJob.update({ where: { id: item.id }, data: { status: 'QUEUED', queueId: String(queued.id) } });
+    } catch (error) {
+      await prisma.backgroundJob.update({ where: { id: item.id }, data: { status: 'FAILED', error: error instanceof Error ? error.message.slice(0, 4000) : 'Queue failure', finishedAt: new Date() } });
+    }
+  }
+  if (enabled('ENABLE_AUTO_EVAL')) {
+    const [knowledgeRuns, agentRuns] = await Promise.all([
+      prisma.knowledgeEvalRun.findMany({ where: { status: 'PENDING' }, take: 10 }),
+      prisma.agentEvalRun.findMany({ where: { status: 'PENDING' }, take: 10 }),
+    ]);
+    for (const run of knowledgeRuns) {
+      const claimed = await prisma.knowledgeEvalRun.updateMany({ where: { id: run.id, status: 'PENDING' }, data: { status: 'QUEUED' } });
+      if (claimed.count) await queue.add('knowledge_eval', { runId: run.id }, { jobId: `knowledge-eval-${run.id}` });
+    }
+    for (const run of agentRuns) {
+      const claimed = await prisma.agentEvalRun.updateMany({ where: { id: run.id, status: 'PENDING' }, data: { status: 'QUEUED' } });
+      if (claimed.count) await queue.add('agent_eval', { runId: run.id }, { jobId: `agent-eval-${run.id}` });
+    }
+  }
+  const deliveries = await prisma.webhookDelivery.findMany({
+    where: {
+      status: { in: ['PENDING', 'RETRYING'] },
+      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: new Date() } }],
+    },
+    take: 50,
+  });
+  for (const delivery of deliveries) {
+    const claimed = await prisma.webhookDelivery.updateMany({ where: { id: delivery.id, status: delivery.status }, data: { status: 'QUEUED' } });
+    if (claimed.count) await queue.add('webhook_retry', { deliveryId: delivery.id }, { jobId: `webhook-${delivery.id}-${delivery.attempts}` });
+  }
+}
 
 async function schedule() {
   if (!enabled('ENABLE_WORKER_CRON', true)) return;
-  await queue.upsertJobScheduler('monthly-report', { pattern: '0 3 1 * *', tz: 'UTC' }, { name: 'monthly-report', data: {} });
-  await queue.upsertJobScheduler('reconcile', { every: 5 * 60_000 }, { name: 'reconcile', data: {} });
-  await queue.upsertJobScheduler('alerts', { every: 10 * 60_000 }, { name: 'alerts', data: {} });
-  await queue.upsertJobScheduler('cleanup', { pattern: '0 4 * * *', tz: 'UTC' }, { name: 'cleanup', data: {} });
+  await queue.upsertJobScheduler('monthly_billing', { pattern: '0 3 1 * *', tz: 'UTC' }, { name: 'monthly_billing', data: {} });
+  await queue.upsertJobScheduler('reconciliation', { every: 5 * 60_000 }, { name: 'reconciliation', data: {} });
+  await queue.upsertJobScheduler('alert_checks', { every: 10 * 60_000 }, { name: 'alert_checks', data: {} });
+  await queue.upsertJobScheduler('log_cleanup', { pattern: '0 4 * * *', tz: 'UTC' }, { name: 'log_cleanup', data: {} });
 }
 
-void schedule().then(() => logger.info('token-factory-worker ready')).catch((error) => logger.error({ error }, 'scheduler setup failed'));
+const databasePoller = setInterval(() => void enqueueDatabaseJobs().catch((error) => logger.error({ error }, 'background job poll failed')), 5_000);
+databasePoller.unref();
+void Promise.all([schedule(), enqueueDatabaseJobs()]).then(() => logger.info('szrouter-worker ready')).catch((error) => logger.error({ error }, 'scheduler setup failed'));
 
 async function shutdown() {
+  clearInterval(databasePoller);
   await worker.close();
   await queue.close();
   await prisma.$disconnect();

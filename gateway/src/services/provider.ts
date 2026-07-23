@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { prisma, type Channel, type ChannelModel, type Model } from '@token-factory/database';
+import { prisma, type Channel, type ChannelModel, type Model } from '@szrouter/database';
 import { config } from '../config.js';
 import { channelFailed, channelSucceeded, circuitOpen } from '../lib/redis.js';
 import { estimateTokens, messageTokens } from '../lib/billing.js';

@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import { prisma } from '@token-factory/database';
+import { prisma } from '@szrouter/database';
 import { config } from '../config.js';
 import { apiKeyHash, verifyToken } from '../lib/security.js';
 import { hitRateLimit } from '../lib/redis.js';
@@ -9,9 +9,19 @@ function bearer(req: Request) {
   return header?.startsWith('Bearer ') ? header.slice(7).trim() : undefined;
 }
 
+function cookie(req: Request, name: string) {
+  const header = req.headers.cookie;
+  if (!header) return undefined;
+  for (const item of header.split(';')) {
+    const [key, ...value] = item.trim().split('=');
+    if (key === name) return decodeURIComponent(value.join('='));
+  }
+  return undefined;
+}
+
 export async function userAuth(req: Request, res: Response, next: NextFunction) {
   try {
-    const token = bearer(req);
+    const token = bearer(req) || cookie(req, 'szrouter_session');
     if (!token) return res.status(401).json({ error: { message: 'Missing bearer token', type: 'authentication_error' } });
     const payload = verifyToken(token);
     if (payload.type !== 'user' || !payload.sub) throw new Error('Invalid token');
@@ -27,7 +37,7 @@ export async function userAuth(req: Request, res: Response, next: NextFunction) 
 export async function apiKeyAuth(req: Request, res: Response, next: NextFunction) {
   try {
     const token = bearer(req) || (typeof req.headers['x-api-key'] === 'string' ? req.headers['x-api-key'] : undefined);
-    if (!token?.startsWith('tf_')) throw new Error('API key required');
+    if (!token || (!token.startsWith('sz_') && !token.startsWith('tf_'))) throw new Error('API key required');
     const apiKey = await prisma.apiKey.findUnique({
       where: { keyHash: apiKeyHash(token) },
       include: { user: true },
@@ -50,7 +60,7 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
 
 export function adminAuth(req: Request, res: Response, next: NextFunction) {
   try {
-    const token = bearer(req);
+    const token = bearer(req) || cookie(req, 'szrouter_admin_session');
     const payload = token ? verifyToken(token) : null;
     if (!payload || payload.type !== 'admin') throw new Error('Invalid token');
     req.admin = { role: 'ADMIN' };

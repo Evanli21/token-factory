@@ -727,3 +727,23 @@ model AgentEvalResult {
 
   @@unique([runId, caseId])
 }
+
+model BackgroundJob {
+  id          String    @id @default(cuid())
+  queueId     String?   @unique
+  type        String
+  status      String    @default("PENDING")
+  payload     Json?
+  result      Json?
+  error       String?
+  attempts    Int       @default(0)
+  progress    Int       @default(0)
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([type, createdAt])
+}

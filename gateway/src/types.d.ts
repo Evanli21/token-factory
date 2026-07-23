@@ -1,4 +1,4 @@
-import type { ApiKey, User } from '@token-factory/database';
+import type { ApiKey, User } from '@szrouter/database';
 
 declare global {
   namespace Express {

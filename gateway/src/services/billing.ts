@@ -1,4 +1,4 @@
-import { Prisma, prisma, type ApiKey, type Model, type User } from '@token-factory/database';
+import { Prisma, prisma, type ApiKey, type Model, type User } from '@szrouter/database';
 import { config } from '../config.js';
 
 type Identity = { user: User; apiKey?: ApiKey; organizationId?: string };
