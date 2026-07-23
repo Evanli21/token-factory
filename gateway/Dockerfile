@@ -5,8 +5,14 @@ RUN apt-get update \
 
 FROM base AS build
 WORKDIR /app
-COPY . .
+COPY package.json package-lock.json ./
+COPY web/package.json web/package.json
+COPY admin/package.json admin/package.json
+COPY gateway/package.json gateway/package.json
+COPY worker/package.json worker/package.json
+COPY packages/database/package.json packages/database/package.json
 RUN npm ci
+COPY . .
 RUN npm run prisma:generate \
  && npm run build -w @token-factory/database \
  && npm run build -w @token-factory/gateway
