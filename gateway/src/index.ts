@@ -26,8 +26,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'token-factory-gateway' }));
-app.get('/', (_req, res) => res.json({ name: 'Token Factory Gateway', version: '1.0.0', docs: '/v1/models', health: '/health' }));
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'szrouter-gateway' }));
+app.get('/', (_req, res) => res.json({ name: 'SZRouter Gateway', version: '1.0.0', docs: '/v1/models', health: '/health' }));
 app.use('/api/auth', authRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api', accountRouter);
@@ -45,7 +45,7 @@ const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
 };
 app.use(errorHandler);
 
-const server = app.listen(config.PORT, '0.0.0.0', () => logger.info({ port: config.PORT }, 'token-factory-gateway listening'));
+const server = app.listen(config.PORT, '0.0.0.0', () => logger.info({ port: config.PORT }, 'szrouter-gateway listening'));
 
 async function shutdown(signal: string) {
   logger.info({ signal }, 'shutting down');

@@ -1,6 +1,6 @@
-# Token Factory
+# SZRouter
 
-Token Factory 是一个可自托管的多租户 AI Token 平台：前台、运营后台、OpenAI Compatible API Gateway、异步 Worker、PostgreSQL/pgvector、Redis/BullMQ 与 Nginx/Let's Encrypt 都包含在同一个 TypeScript monorepo 中。
+SZRouter 是一个可自托管的多租户 AI Token 平台：前台、运营后台、OpenAI Compatible API Gateway、异步 Worker、PostgreSQL/pgvector、Redis/BullMQ 与 Nginx/Let's Encrypt 都包含在同一个 TypeScript monorepo 中。
 
 ## 能力概览
 
@@ -91,7 +91,7 @@ curl http://localhost:8000/v1/chat/completions \
   -d '{
     "model":"gpt-4o-mini",
     "stream":true,
-    "messages":[{"role":"user","content":"Hello Token Factory"}]
+    "messages":[{"role":"user","content":"Hello SZRouter"}]
   }'
 ```
 

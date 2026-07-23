@@ -1,6 +1,6 @@
 # API Reference
 
-Base URL：`https://api.yourdomain.com`。所有 `/v1/*` 路由都要求 Token Factory API Key。
+Base URL：`https://api.yourdomain.com`。所有 `/v1/*` 路由都要求 SZRouter API Key。
 
 ## Models
 

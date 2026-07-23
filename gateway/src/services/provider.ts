@@ -46,7 +46,7 @@ export async function channelCandidates(modelId: string) {
 function mockText(messages: ChatMessage[]) {
   const last = [...messages].reverse().find((message) => message.role === 'user');
   const input = typeof last?.content === 'string' ? last.content : JSON.stringify(last?.content ?? '');
-  return `Token Factory 本地演示模型已收到：${input}\n\n配置 OPENAI_API_KEY 并重新运行种子命令后，即可切换到真实的 OpenAI Compatible 上游。`;
+  return `SZRouter 本地演示模型已收到：${input}\n\n配置 OPENAI_API_KEY 并重新运行种子命令后，即可切换到真实的 OpenAI Compatible 上游。`;
 }
 
 function mockCompletion(body: ChatRequest, model: string) {

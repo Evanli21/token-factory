@@ -147,7 +147,7 @@ async function createMonthlyInvoices() {
     await new Promise<void>((resolve, reject) => {
       const doc = new PDFDocument({ size: 'A4', margin: 56 });
       doc.pipe(createWriteStream(pdfPath)).on('finish', resolve).on('error', reject);
-      doc.fontSize(24).text('Token Factory Invoice').moveDown();
+      doc.fontSize(24).text('SZRouter Invoice').moveDown();
       doc.fontSize(12).text(`Organization: ${organization.name}`).text(`Billing month: ${month.toISOString().slice(0, 7)}`).text(`Requests: ${total._count}`).text(`Amount due: $${Number(total._sum.cost || 0).toFixed(8)} USD`).moveDown().text(`Invoice ID: ${invoice.id}`);
       doc.end();
     });
