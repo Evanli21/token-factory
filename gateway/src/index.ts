@@ -29,8 +29,8 @@ app.use((req, res, next) => {
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'token-factory-gateway' }));
 app.get('/', (_req, res) => res.json({ name: 'Token Factory Gateway', version: '1.0.0', docs: '/v1/models', health: '/health' }));
 app.use('/api/auth', authRouter);
-app.use('/api', accountRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api', accountRouter);
 app.use('/v1', v1Router);
 
 app.use((_req, res) => res.status(404).json({ error: { message: 'Route not found', type: 'not_found_error' } }));
